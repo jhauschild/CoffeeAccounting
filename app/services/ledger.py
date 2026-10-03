@@ -61,6 +61,17 @@ def _event_by_key(db: Session, key: str) -> ConsumptionEvent | None:
     return db.scalars(select(ConsumptionEvent).where(ConsumptionEvent.idempotency_key == key)).first()
 
 
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    """True only for unique-index/constraint conflicts (never CHECK, FK or NOT NULL failures)."""
+    orig = getattr(exc, "orig", None)
+    if getattr(orig, "sqlstate", None) == "23505" or getattr(orig, "pgcode", None) == "23505":
+        return True
+    # sqlite3: SQLITE_CONSTRAINT_UNIQUE = 2067, SQLITE_CONSTRAINT_PRIMARYKEY = 1555
+    if getattr(orig, "sqlite_errorcode", None) in (2067, 1555):
+        return True
+    return "UNIQUE constraint failed" in str(orig)
+
+
 def _insert_once(db: Session, obj, *, on_conflict):
     """Insert inside a SAVEPOINT; on a unique violation call `on_conflict()` instead.
 
@@ -71,7 +82,9 @@ def _insert_once(db: Session, obj, *, on_conflict):
         with db.begin_nested():
             db.add(obj)
             db.flush()
-    except IntegrityError:
+    except IntegrityError as exc:
+        if not _is_unique_violation(exc):
+            raise
         return on_conflict()
     return obj
 

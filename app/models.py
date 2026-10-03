@@ -210,7 +210,7 @@ class ConsumptionEvent(Base):
             name="signs_agree",
         ),
         CheckConstraint(
-            "amount_cents <> 0 OR unit_price_cents = 0 OR type = 'adjustment'", name="zero_amount_allowed"
+            "amount_cents <> 0 OR unit_price_cents = 0 OR type IN ('adjustment', 'reversal')", name="zero_amount_allowed"
         ),
         Index(
             "uq_consumption_events_reversal_of_id",

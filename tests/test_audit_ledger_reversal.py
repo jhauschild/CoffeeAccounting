@@ -81,8 +81,6 @@ def test_reversal_of_overridden_adjustment_negates_exactly(db, user, price, glob
     assert ledger.get_totals(db, user.id).balance_cents == 0 and check_ledger(db).ok
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: reversal of a zero-amount adjustment (unit price > 0) violates CHECK "
-                                       "zero_amount_allowed; _insert_once maps the IntegrityError to AlreadyReversed")
 def test_zero_amount_adjustment_can_be_reversed(db, user, price, global_admin):
     adj = ledger.add_adjustment(db, admin=global_admin, user_id=user.id, quantity=2, amount_cents=0,
                                 note="free coffees")
@@ -168,3 +166,13 @@ def test_undo_after_admin_revoked_sessions_is_refused(client, db, user, price, l
     r = client.post(f"/coffee/undo/{eid}", data={"csrf_token": csrf}, follow_redirects=False)
     assert r.status_code in (303, 403)
     assert reversals(db) == 0 and len(events(db)) == 1
+
+
+def test_check_violation_is_not_reported_as_already_reversed(db, user, price):
+    from sqlalchemy.exc import IntegrityError
+    session = factories.make_session(db, user)
+    (event,) = factories.add_events(db, user, "single", session_id=session.id)
+    bad = ledger._make_reversal(event, now=event.created_at)
+    bad.quantity = 1  # violates reversal_shape / signs_agree: a CHECK, not a unique conflict
+    with pytest.raises(IntegrityError):
+        ledger._insert_reversal(db, bad)

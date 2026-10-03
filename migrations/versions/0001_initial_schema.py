@@ -209,7 +209,7 @@ def upgrade() -> None:
     sa.Column('admin_id', sa.Uuid(), nullable=True),
     sa.Column('note', sa.String(length=500), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.CheckConstraint("amount_cents <> 0 OR unit_price_cents = 0 OR type = 'adjustment'", name=op.f('ck_consumption_events_zero_amount_allowed')),
+    sa.CheckConstraint("amount_cents <> 0 OR unit_price_cents = 0 OR type IN ('adjustment', 'reversal')", name=op.f('ck_consumption_events_zero_amount_allowed')),
     sa.CheckConstraint("type <> 'adjustment' OR admin_id IS NOT NULL", name=op.f('ck_consumption_events_adjustment_admin')),
     sa.CheckConstraint("type <> 'double' OR quantity = 2", name=op.f('ck_consumption_events_double_quantity')),
     sa.CheckConstraint("type <> 'reversal' OR (quantity < 0 AND reversal_of_id IS NOT NULL)", name=op.f('ck_consumption_events_reversal_shape')),
