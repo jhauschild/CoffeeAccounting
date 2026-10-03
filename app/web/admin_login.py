@@ -45,10 +45,10 @@ def login_form(request: Request):
 @router.post("/login", dependencies=[Depends(ad.verify_login_csrf)])
 def login_submit(request: Request, username: str = Form("", max_length=200), password: str = Form("", max_length=1000)):
     ip = client_ip(request)
-    with write_session() as db:  # failures are committed (rate-limit hit + audit) before the error page
-        outcome = admin_auth.start_login(db, username=username, password=password, ip=ip,
-                                         old_raw_token=request.cookies.get(admin_auth.ADMIN_COOKIE))
-        db.expunge_all()
+    # start_login manages its own short write transactions (Argon2 runs outside the write lock);
+    # failures are committed (rate-limit hit + audit) before the error page.
+    outcome = admin_auth.start_login(username=username, password=password, ip=ip,
+                                     old_raw_token=request.cookies.get(admin_auth.ADMIN_COOKIE))
     if outcome.status == "limited":
         return _login_page(request, error="rate_limited", status_code=429, username=username)
     if outcome.status != "ok":

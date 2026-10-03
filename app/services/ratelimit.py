@@ -31,6 +31,7 @@ ACCESS_CODE_FAILURES = ("access_code", 10, 15 * 60)   # per IP
 REGISTRATION = ("register", 10, 60 * 60)               # per IP
 PROFILE_SEARCH = ("profile_search", 60, 5 * 60)        # per IP
 ADMIN_LOGIN_FAILURES = ("admin_login", 5, 15 * 60)     # per username+IP
+ADMIN_LOGIN_FAILURES_IP = ("admin_login_ip", 15, 15 * 60)  # per IP, across usernames
 
 
 def _now(now: datetime | None) -> datetime:
@@ -65,9 +66,12 @@ def is_limited(db: Session, bucket: str, key: str, limit: int, window_seconds: i
     return count_hits(db, bucket, key, window_seconds, now) >= limit
 
 
-def record_hit(db: Session, bucket: str, key: str, now: datetime | None = None) -> None:
-    db.add(RateLimitEvent(bucket=_bucket(bucket), key=_key(key), created_at=_now(now)))
+def record_hit(db: Session, bucket: str, key: str, now: datetime | None = None) -> int:
+    """Record one event; returns its id (so a caller can release it again)."""
+    event = RateLimitEvent(bucket=_bucket(bucket), key=_key(key), created_at=_now(now))
+    db.add(event)
     db.flush()
+    return event.id
 
 
 def check_rate(db: Session, bucket: str, key: str, limit: int, window_seconds: int,

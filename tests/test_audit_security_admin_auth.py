@@ -138,8 +138,6 @@ def test_wrong_current_password_on_change_counts_as_login_failure(app, fast):
     assert _password_step(_client(app)).status_code == 429  # same username + IP bucket
 
 
-@pytest.mark.xfail(strict=True, reason="FINDING: start_login runs Argon2 (64 MiB, t=3) inside BEGIN IMMEDIATE, so every "
-                                        "unauthenticated login attempt holds the global SQLite write lock while hashing")
 def test_login_does_not_hold_the_write_lock_while_hashing(fast, db_path, monkeypatch):
     make_real_admin()
     lock_free = []
@@ -157,14 +155,11 @@ def test_login_does_not_hold_the_write_lock_while_hashing(fast, db_path, monkeyp
         return False
 
     monkeypatch.setattr(admin_auth, "verify_password", probe)
-    with write_session() as w:  # exactly how routes call it (admin_login.login_submit)
-        admin_auth.start_login(w, username="boss", password="whatever", ip="203.0.113.1")
-        admin_auth.start_login(w, username="no-such-admin", password="whatever", ip="203.0.113.1")
+    admin_auth.start_login(username="boss", password="whatever", ip="203.0.113.1")  # as admin_login.login_submit
+    admin_auth.start_login(username="no-such-admin", password="whatever", ip="203.0.113.1")
     assert lock_free == [True, True]
 
 
-@pytest.mark.xfail(strict=True, reason="FINDING: no per-IP cap and rate-limited attempts are still audited; one "
-                                        "anonymous client appends unbounded rows to the append-only audit_log")
 def test_anonymous_login_flood_cannot_grow_audit_log_without_bound(app, fast):
     c = _client(app)
     page = c.get("/admin/login")

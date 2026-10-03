@@ -24,10 +24,7 @@ def audit_actions():
 
 
 def login(username="boss", password=PASSWORD, ip=IP, old=None):
-    with write_session() as w:
-        out = admin_auth.start_login(w, username=username, password=password, ip=ip, old_raw_token=old)
-        w.expunge_all()
-    return out
+    return admin_auth.start_login(username=username, password=password, ip=ip, old_raw_token=old)
 
 
 def test_password_policy_and_argon2id():
@@ -261,3 +258,15 @@ def test_set_admin_chairs(chair, other_chair):
     with write_session() as w:
         with pytest.raises(InvalidInput):
             admin_auth.set_admin_chairs(w, w.get(AdminUser, admin_id), [])
+
+
+def test_ip_cap_across_usernames_and_success_releases_the_counted_attempt(fast_hasher):
+    make_real_admin()
+    for _ in range(4):
+        assert login(password="wrong wrong wrong").status == "invalid"
+    assert login().status == "ok"  # success is not a failure: it does not count against the budget
+    assert login(password="wrong wrong wrong").status == "invalid"  # still under the 5/username+IP cap
+    for i in range(15 - 5):
+        assert login(username=f"nobody{i}", ip=IP).status == "invalid"
+    assert login(username="nobody-else", ip=IP).status == "limited"  # per-IP cap across usernames
+    assert login(username="nobody-else", ip="203.0.113.99").status == "invalid"  # other IPs unaffected

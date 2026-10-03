@@ -8,13 +8,15 @@
   session directly.
 * TOTP: `pyotp`, 8 single-use recovery codes stored as keyed hashes. Codes cannot be replayed
   within their validity window.
-* Rate limiting: password and TOTP failures share one bucket per username+IP, stored in the
-  database (`ratelimit.ADMIN_LOGIN_FAILURES`).
+* Rate limiting: password and TOTP failures share one bucket per username+IP plus a per-IP cap
+  across usernames, stored in the database (`ratelimit.ADMIN_LOGIN_FAILURES[_IP]`). Rate-limited
+  attempts are audited once per window and username+IP.
 * Every login attempt is audited; neither passwords, codes nor tokens are ever logged.
 
 Login functions never raise for bad credentials: they record the failure (rate-limit hit and
 audit entry) in the caller's transaction and return an outcome, so the caller can commit it
-and then render an error. Like all services these functions never commit.
+and then render an error. Like all services these functions never commit, except `start_login`,
+which manages its own short transactions so the Argon2 check runs outside the write lock.
 """
 
 from __future__ import annotations
@@ -34,7 +36,8 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import ADMIN_ROLES, AdminChair, AdminSession, AdminUser, Chair
+from app.db import write_session
+from app.models import ADMIN_ROLES, AdminChair, AdminSession, AdminUser, Chair, RateLimitEvent
 from app.services import audit, ratelimit, signing
 from app.services.errors import Conflict, InvalidInput, NotFound
 from app.timeutil import ensure_utc, utcnow
@@ -397,9 +400,18 @@ def _limit_key(username: str, ip: str) -> str:
     return f"{normalize_username(username)[:MAX_USERNAME_LENGTH]}|{ip}"
 
 
-def _fail(db: Session, *, username: str, ip: str, step: str, admin: AdminUser | None, now: datetime) -> LoginOutcome:
-    bucket = ratelimit.ADMIN_LOGIN_FAILURES[0]
-    ratelimit.record_hit(db, bucket, _limit_key(username, ip), now)
+def _limit_checks(username: str, ip: str):
+    """(bucket, key, limit, window) for every cap a login attempt counts against."""
+    user_bucket, user_limit, window = ratelimit.ADMIN_LOGIN_FAILURES
+    ip_bucket, ip_limit, ip_window = ratelimit.ADMIN_LOGIN_FAILURES_IP
+    return ((user_bucket, _limit_key(username, ip), user_limit, window), (ip_bucket, ip, ip_limit, ip_window))
+
+
+def _fail(db: Session, *, username: str, ip: str, step: str, admin: AdminUser | None, now: datetime,
+          record_hits: bool = True) -> LoginOutcome:
+    if record_hits:
+        for bucket, key, _limit, _window in _limit_checks(username, ip):
+            ratelimit.record_hit(db, bucket, key, now)
     audit.log(db, actor_type="admin" if admin else "system", actor_id=admin.id if admin else None,
               action="admin.login.failed", target_type="admin", target_id=admin.id if admin else None,
               metadata={"step": step, "username_attempted": (username or "")[:MAX_USERNAME_LENGTH]},
@@ -407,13 +419,27 @@ def _fail(db: Session, *, username: str, ip: str, step: str, admin: AdminUser | 
     return LoginOutcome("invalid")
 
 
+def _tripped_key(db: Session, username: str, ip: str, now: datetime) -> str | None:
+    """Key of the first cap that is exhausted (`bucket|key`), or None when the attempt may proceed."""
+    for bucket, key, limit, window in _limit_checks(username, ip):
+        if ratelimit.is_limited(db, bucket, key, limit, window, now):
+            return f"{bucket}|{key}"
+    return None
+
+
 def _limited(db: Session, *, username: str, ip: str, step: str, admin: AdminUser | None, now: datetime) -> bool:
-    bucket, limit, window = ratelimit.ADMIN_LOGIN_FAILURES
-    if not ratelimit.is_limited(db, bucket, _limit_key(username, ip), limit, window, now):
+    """True when rate limited. The refusal is audited at most once per window and exhausted cap
+    (username+IP or whole IP), so an anonymous client cannot grow the append-only audit log with
+    every rejected attempt."""
+    marker = _tripped_key(db, username, ip, now)
+    if marker is None:
         return False
-    audit.log(db, actor_type="system", action="admin.login.rate_limited", target_type="admin",
-              target_id=admin.id if admin else None,
-              metadata={"step": step, "username_attempted": (username or "")[:MAX_USERNAME_LENGTH]}, ip=ip, now=now)
+    if ratelimit.count_hits(db, "admin_login_audit", marker, ratelimit.ADMIN_LOGIN_FAILURES[2], now) == 0:
+        ratelimit.record_hit(db, "admin_login_audit", marker, now)
+        audit.log(db, actor_type="system", action="admin.login.rate_limited", target_type="admin",
+                  target_id=admin.id if admin else None,
+                  metadata={"step": step, "username_attempted": (username or "")[:MAX_USERNAME_LENGTH]},
+                  ip=ip, now=now)
     return True
 
 
@@ -430,35 +456,55 @@ def _complete_login(db: Session, admin: AdminUser, *, ip: str, now: datetime, ol
     return session, raw
 
 
-def start_login(db: Session, *, username: str, password: str, ip: str, old_raw_token: str | None = None,
+def start_login(*, username: str, password: str, ip: str, old_raw_token: str | None = None,
                 now: datetime | None = None) -> LoginOutcome:
-    """Password step. `old_raw_token` (a previous admin cookie) is revoked: sessions rotate on login."""
-    now = _now(now)
-    admin = get_by_username(db, username) if username else None
-    if _limited(db, username=username, ip=ip, step="password", admin=admin, now=now):
-        return LoginOutcome("limited")
-    if admin is None or not admin.active:
-        _verify_against_dummy(password)
-        return _fail(db, username=username, ip=ip, step="password", admin=admin, now=now)
-    if not verify_password(admin.password_hash, password):
-        return _fail(db, username=username, ip=ip, step="password", admin=admin, now=now)
+    """Password step. `old_raw_token` (a previous admin cookie) is revoked: sessions rotate on login.
 
-    old = resolve_session(db, old_raw_token, now) if old_raw_token else None
-    old_id = old[0].id if old else None
-    if admin.totp_enabled:
-        stage = "totp"
-    elif get_settings().admin_totp_required:
-        stage = "enroll"
+    Unlike the other services this opens and commits its own short transactions: the Argon2
+    check (64 MiB, several iterations) must never run while the SQLite write lock is held, or
+    unauthenticated requests could stall every writer. Steps: (1) write txn: limit check and
+    up-front count of this attempt as a failure (keeps the budget strict for parallel guesses);
+    (2) no transaction: password / decoy hash check; (3) write txn: audit, or release the
+    counted failure and issue the session.
+    """
+    now = _now(now)
+    with write_session() as db:
+        admin = get_by_username(db, username) if username else None
+        if _limited(db, username=username, ip=ip, step="password", admin=admin, now=now):
+            return LoginOutcome("limited")
+        hit_ids = [ratelimit.record_hit(db, bucket, key, now) for bucket, key, _l, _w in _limit_checks(username, ip)]
+        admin_id = admin.id if admin else None
+        password_hash = admin.password_hash if admin is not None and admin.active else None
+    if password_hash is not None:
+        ok = verify_password(password_hash, password)
     else:
-        stage = "done"
-    if stage == "done":
-        session, raw = _complete_login(db, admin, ip=ip, now=now, old_session_id=old_id, method="password")
-    else:
-        session, raw = _new_session(db, admin, verified=False, now=now)
-        if old_id is not None:
-            revoke_session(db, old_id, now)
-        audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.login.password_ok",
-                  target_type="admin", target_id=admin.id, metadata={"next": stage}, ip=ip, now=now)
+        _verify_against_dummy(password)
+        ok = False
+    with write_session() as db:
+        admin = db.get(AdminUser, admin_id) if admin_id else None
+        # The account may have been disabled or its password changed while we were hashing.
+        if not ok or admin is None or not admin.active or admin.password_hash != password_hash:
+            outcome = _fail(db, username=username, ip=ip, step="password", admin=admin, now=now, record_hits=False)
+            db.expunge_all()
+            return outcome
+        db.execute(delete(RateLimitEvent).where(RateLimitEvent.id.in_(hit_ids)))
+        old = resolve_session(db, old_raw_token, now) if old_raw_token else None
+        old_id = old[0].id if old else None
+        if admin.totp_enabled:
+            stage = "totp"
+        elif get_settings().admin_totp_required:
+            stage = "enroll"
+        else:
+            stage = "done"
+        if stage == "done":
+            session, raw = _complete_login(db, admin, ip=ip, now=now, old_session_id=old_id, method="password")
+        else:
+            session, raw = _new_session(db, admin, verified=False, now=now)
+            if old_id is not None:
+                revoke_session(db, old_id, now)
+            audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.login.password_ok",
+                      target_type="admin", target_id=admin.id, metadata={"next": stage}, ip=ip, now=now)
+        db.expunge_all()
     return LoginOutcome("ok", admin, session, raw, stage)
 
 
