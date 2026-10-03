@@ -21,9 +21,9 @@
       "brief": "docs/agents/01b-core-platform.md",
       "dir": "/home/claude/coffee-ledger",
       "model": "opus",
-      "status": "pending",
-      "attempts": 0,
-      "last_commit": null
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "6f02bc5"
     },
     "user-web": {
       "brief": "docs/agents/02-user-web.md",

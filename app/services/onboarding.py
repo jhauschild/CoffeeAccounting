@@ -29,11 +29,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Chair, ConsumptionEvent, PendingAction, User, UserSession
-from app.services import sessions, signing
+from app.services import sessions, signing, users
 from app.services.errors import InvalidInput, NoPriceConfigured, NotFound, UserInactive
 from app.services.ledger import record_coffee
 from app.services.pending import consume_pending
-from app.services.users import clean_display_name, normalize_name
+
 from app.timeutil import ensure_utc, utcnow
 
 # coffee_status values
@@ -99,18 +99,7 @@ def _consume_and_record(db: Session, user: User, session: UserSession, pending_i
 
 def _new_user(db: Session, *, user_id: uuid.UUID | None, display_name: str, chair_id: uuid.UUID,
               now: datetime) -> User:
-    # Mirrors users.create_user, but with a caller-chosen id (see module docstring).
-    name = clean_display_name(display_name)
-    chair = db.get(Chair, chair_id) if chair_id is not None else None
-    if chair is None or not chair.active:
-        raise InvalidInput("unknown or inactive chair")
-    user = User(display_name=name, normalized_name=normalize_name(name), chair_id=chair.id, status="active",
-                created_at=now, last_activity_at=now)
-    if user_id is not None:
-        user.id = user_id
-    db.add(user)
-    db.flush()
-    return user
+    return users.create_user(db, display_name=display_name, chair_id=chair_id, now=now, user_id=user_id)
 
 
 def register_and_start_session(

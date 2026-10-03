@@ -11,7 +11,7 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import DISPLAY_NAME_MAX, AdminUser, Chair, User, UserSession, effective_users
-from app.services import audit
+from app.services import audit, sessions
 from app.services.authz import ensure_admin_can_access_user, require_global
 from app.services.errors import Conflict, Forbidden, InvalidInput, NotFound, UserInactive
 from app.timeutil import utcnow
@@ -122,12 +122,15 @@ def find_same_name(db: Session, *, display_name: str, chair_id: uuid.UUID) -> li
 
 
 # ----- mutations ----------------------------------------------------------------------------
-def create_user(db: Session, *, display_name: str, chair_id: uuid.UUID, now: datetime | None = None) -> User:
+def create_user(db: Session, *, display_name: str, chair_id: uuid.UUID, now: datetime | None = None,
+                user_id: uuid.UUID | None = None) -> User:
     name = clean_display_name(display_name)
     _active_chair(db, chair_id)
     now = now or utcnow()
     user = User(display_name=name, normalized_name=normalize_name(name), chair_id=chair_id, status="active",
                 created_at=now, last_activity_at=now)
+    if user_id is not None:
+        user.id = user_id
     db.add(user)
     db.flush()
     return user
@@ -225,12 +228,7 @@ def merge_users(
         db.execute(update(User).where(User.merged_into_id == duplicate.id).values(merged_into_id=target.id))
     duplicate.status = "merged"
     duplicate.merged_into_id = target.id
-    # Temporary until sessions.revoke_user_sessions (core-b) exists; same semantics.
-    revoked = db.execute(
-        update(UserSession)
-        .where(UserSession.user_id == duplicate.id, UserSession.revoked_at.is_(None))
-        .values(revoked_at=now)
-    ).rowcount
+    revoked = sessions.revoke_user_sessions(db, duplicate.id, now)
     db.flush()
     audit.log(db, actor_type="admin", actor_id=admin.id, action="user.merged", target_type="user",
               target_id=duplicate.id,
