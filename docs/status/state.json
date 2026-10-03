@@ -69,9 +69,9 @@
       "brief": "docs/agents/07-acceptance.md",
       "dir": "/home/claude/wt/acceptance",
       "model": "sonnet",
-      "status": "pending",
-      "attempts": 0,
-      "last_commit": null
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "8c40944"
     },
     "fixer-1": {
       "status": "done",
