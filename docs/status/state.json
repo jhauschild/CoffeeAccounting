@@ -45,17 +45,17 @@
       "brief": "docs/agents/04-ops.md",
       "dir": "/home/claude/wt/ops",
       "model": "sonnet",
-      "status": "pending",
-      "attempts": 0,
-      "last_commit": null
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "b7a3d9e"
     },
     "ledger-audit": {
       "brief": "docs/agents/05-ledger-audit.md",
       "dir": "/home/claude/wt/audit-ledger",
       "model": "opus",
-      "status": "pending",
-      "attempts": 0,
-      "last_commit": null
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "e9e2ef1"
     },
     "security": {
       "brief": "docs/agents/06-security-review.md",
