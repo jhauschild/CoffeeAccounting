@@ -173,8 +173,9 @@ def test_deactivate_reactivate_and_user_sessions(gc, cc, db, alice):
 def test_deactivated_user_cannot_scan(gc, db, alice, login, client):
     login(alice)
     post(gc, f"/admin/users/{alice.id}/status", active="0")
+    # GET only serves the auto-submit page (no state change); the POST path is covered in test_user_scan.
     r = client.get("/coffee/single", follow_redirects=False)
-    assert r.status_code in (303, 403, 404) and "recorded" not in r.text.lower()
+    assert r.status_code == 200 and "recorded" not in r.text.lower()
     assert count(ConsumptionEvent) == 0
 
 

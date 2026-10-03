@@ -29,17 +29,17 @@
       "brief": "docs/agents/02-user-web.md",
       "dir": "/home/claude/wt/user-web",
       "model": "sonnet",
-      "status": "pending",
-      "attempts": 0,
-      "last_commit": null
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "9273557"
     },
     "admin": {
       "brief": "docs/agents/03-admin.md",
       "dir": "/home/claude/wt/admin",
       "model": "sonnet",
-      "status": "pending",
-      "attempts": 0,
-      "last_commit": null
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "a058b1a"
     },
     "ops": {
       "brief": "docs/agents/04-ops.md",
