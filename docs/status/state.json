@@ -61,9 +61,9 @@
       "brief": "docs/agents/06-security-review.md",
       "dir": "/home/claude/wt/audit-security",
       "model": "opus",
-      "status": "pending",
-      "attempts": 0,
-      "last_commit": null
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "68b4f2b"
     },
     "acceptance": {
       "brief": "docs/agents/07-acceptance.md",
@@ -72,6 +72,11 @@
       "status": "pending",
       "attempts": 0,
       "last_commit": null
+    },
+    "fixer-1": {
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "230068e"
     }
   }
 }
