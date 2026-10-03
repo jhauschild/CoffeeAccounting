@@ -224,3 +224,9 @@ def test_development_defaults_only_allowed_for_local_http(monkeypatch):
     for bad in ("http://coffee.example.org", "https://localhost"):
         with pytest.raises(ValueError, match="ENVIRONMENT=production"):
             Settings(_env_file=None, public_base_url=bad)
+
+
+def test_qr_svg_label_cannot_break_out_of_the_aria_label_attribute():
+    from app.services import exports
+    svg = exports.qr_svg("https://coffee.example.org/x", 'a" onload="alert(1)\' <b>')
+    assert 'aria-label="a&quot; onload=&quot;alert(1)&#x27; &lt;b&gt; QR code"' in svg

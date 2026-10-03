@@ -1,5 +1,5 @@
 -r requirements.txt
-pytest>=8
-httpx>=0.27
-pytest-playwright>=0.5
-pip-audit>=2.7
+pytest==9.1.1
+httpx==0.28.1
+pytest-playwright==0.9.0
+pip-audit>=2.7  # not installed in the reference venv, so not pinned

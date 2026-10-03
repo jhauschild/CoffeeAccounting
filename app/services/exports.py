@@ -42,6 +42,8 @@ def csv_text(value) -> str:
         return "'" + s
     return s
 
+_ATTR_ENTITIES = {'"': "&quot;", "'": "&#x27;"}  # for values inside a quoted attribute
+
 
 def _money(cents: int | None) -> str:
     return "" if cents is None else format_amount(cents, decimal_separator=get_settings().csv_decimal_separator)
@@ -175,7 +177,7 @@ def qr_svg(url: str, label: str | None, *, caption: str | None = None, standalon
     font = 'font-family="Arial, Helvetica, sans-serif"'
     name = label or "QR code"
     out = [
-        f'<svg{ns} viewBox="0 0 {width} {height}" role="img" aria-label="{escape(name)} QR code" '
+        f'<svg{ns} viewBox="0 0 {width} {height}" role="img" aria-label="{escape(name, _ATTR_ENTITIES)} QR code" '
         f'class="qr-svg" shape-rendering="crispEdges">',
         f"<title>{escape(name + ': ' + url) if label else escape(name)}</title>",
         f'<rect width="{width}" height="{height}" fill="#fff"/>',
