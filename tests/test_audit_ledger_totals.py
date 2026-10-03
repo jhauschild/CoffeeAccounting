@@ -95,3 +95,19 @@ def test_credit_is_consumed_exactly_and_reversal_restores_it(client, db, user, g
     db.commit()
     assert ev.amount_cents == -66
     assert ledger.get_totals(db, user.id).balance_cents == -67
+
+
+def test_per_chair_totals_net_out_after_chair_change_and_reversal(db, user, chair, other_chair, price, global_admin):
+    from app.services import stats, users
+
+    session = factories.make_session(db, user)
+    (event,) = factories.add_events(db, user, "double", session_id=session.id)
+    users.update_profile(db, user_id=user.id, chair_id=other_chair.id, actor_type="user")
+    rev = ledger.undo_coffee(db, user_id=user.id, session_id=session.id, event_id=event.id)
+    pay = factories.make_payment(db, user, global_admin, 300)
+    db.commit()
+    assert rev.chair_id == chair.id and pay.chair_id == other_chair.id  # chair at event time
+    per_chair = {c.chair_id: c for c in stats.dashboard(db, global_admin).per_chair}
+    assert (per_chair[chair.id].shots, per_chair[chair.id].consumed_cents) == (0, 0)
+    assert per_chair[other_chair.id].paid_cents == 300
+    assert ledger.get_totals(db, user.id).balance_cents == -300
