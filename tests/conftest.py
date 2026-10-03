@@ -142,3 +142,46 @@ def chair_admin(db, chair):
 @pytest.fixture
 def price(db):
     return factories.set_price(db, 50)
+
+
+# ----- core-b (platform) fixtures ---------------------------------------------------------------
+@pytest.fixture
+def app(settings_env):
+    """A fresh FastAPI app built with the per-test settings."""
+    from app.main import create_app
+
+    return create_app()
+
+
+@pytest.fixture
+def client(app):
+    """TestClient (base URL http://testserver = PUBLIC_BASE_URL); server errors become 500 pages."""
+    from fastapi.testclient import TestClient
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+
+
+@pytest.fixture
+def login(client, db):
+    """`login(user)` gives `client` a valid `coffee_session` cookie for `user`; returns the raw token."""
+    from app.db import write_session
+    from app.services.sessions import SESSION_COOKIE, issue_session
+
+    def _login(user) -> str:
+        with write_session() as w:
+            raw = issue_session(w, user.id)
+        client.cookies.set(SESSION_COOKIE, raw)
+        return raw
+
+    return _login
+
+
+@pytest.fixture
+def gate_cookie(client):
+    """Give `client` a valid `coffee_gate` cookie (access gate passed)."""
+    from app.services.gate import GATE_COOKIE, make_gate_cookie
+
+    value = make_gate_cookie()
+    client.cookies.set(GATE_COOKIE, value)
+    return value

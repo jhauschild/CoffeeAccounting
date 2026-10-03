@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ t("error.title") }} – {{ settings.app_title }}{% endblock %}
+{% block content %}
+<section class="card notice notice-error">
+  <h1>{{ t("error.title") }}</h1>
+  <p>{{ message }}</p>
+  <p class="muted">{{ status_code }}</p>
+  <p><a class="button" href="/">{{ t("common.back_home") }}</a></p>
+</section>
+{% endblock %}

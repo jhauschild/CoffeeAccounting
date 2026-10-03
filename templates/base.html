@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="same-origin">
+  <title>{% block title %}{{ settings.app_title }}{% endblock %}</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <a class="skip-link" href="#content">{{ t("common.skip_to_content") }}</a>
+  <header class="site-header">
+    <a class="brand" href="/">{{ settings.app_title }}</a>
+    {% block header_extra %}{% endblock %}
+  </header>
+  <main id="content" class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <p>{{ t("common.trust_notice") }}</p>
+    <p><a href="/privacy">{{ t("common.privacy") }}</a></p>
+  </footer>
+  {% block scripts_extra %}{% endblock %}
+</body>
+</html>
