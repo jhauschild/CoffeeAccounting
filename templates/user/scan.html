@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.scan.title_" ~ kind) }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card center stack">
+  <h1>{{ t("user.scan.title_" ~ kind) }}</h1>
+  <p>{{ t("user.scan.recording") }}</p>
+  <form method="post" action="/coffee/{{ kind }}" data-autosubmit>
+    <input type="hidden" name="token" value="{{ scan_token }}">
+    <button type="submit" class="button-large button-block">{{ t("user.scan.button_" ~ kind) }}</button>
+  </form>
+  <p class="muted">{{ t("user.scan.hint") }}</p>
+</section>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/scan.js" defer></script>{% endblock %}

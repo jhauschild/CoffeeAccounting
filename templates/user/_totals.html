@@ -1,0 +1,11 @@
+{% macro balance(totals) -%}
+{% if totals.balance_cents < 0 %}{{ t("user.totals.credit", amount=(-totals.balance_cents)|money) }}{% else %}{{ totals.balance_cents|money }}{% endif %}
+{%- endmacro %}
+{% macro totals_list(totals) %}
+<dl class="totals">
+  <dt>{{ t("user.totals.shots") }}</dt><dd>{{ totals.consumed_shots }}</dd>
+  <dt>{{ t("user.totals.consumed") }}</dt><dd>{{ totals.consumed_amount_cents|money }}</dd>
+  <dt>{{ t("user.totals.paid") }}</dt><dd>{{ totals.paid_amount_cents|money }}</dd>
+  <dt>{{ t("user.totals.balance") }}</dt><dd class="{{ 'credit' if totals.balance_cents < 0 else '' }}">{{ balance(totals) }}</dd>
+</dl>
+{% endmacro %}

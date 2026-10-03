@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "user/_totals.html" import totals_list %}
+{% block title %}{{ t("user.account.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+{% if notice %}<p class="card notice notice-ok" role="status">{{ t(notice) }}</p>{% endif %}
+<section class="card">
+  <h1>{{ t("user.account.title") }}</h1>
+  <dl class="totals">
+    <dt>{{ t("user.account.profile") }}</dt><dd>{{ user.display_name }} · {{ chair.short_name }}</dd>
+    <dt>{{ t("user.account.price") }}</dt><dd>{% if price_cents is not none %}{{ price_cents|money }}{% else %}{{ t("user.account.no_price") }}{% endif %}</dd>
+  </dl>
+  <p><a href="/account/edit">{{ t("user.account.edit") }}</a></p>
+</section>
+<section class="card">
+  <h2>{{ t("user.totals.title") }}</h2>
+  {{ totals_list(totals) }}
+</section>
+<section class="card">
+  <h2>{{ t("user.account.history") }}</h2>
+  {% if events %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>{{ t("user.account.col_time") }}</th><th>{{ t("user.account.col_type") }}</th><th class="num">{{ t("user.account.col_shots") }}</th><th class="num">{{ t("user.account.col_amount") }}</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr class="{{ 'is-reversed' if e.reversed else '' }}">
+        <td>{{ e.time }}</td>
+        <td>{{ t("user.account.type_" ~ e.type) }}{% if e.reversed %} <span class="muted">{{ t("user.account.reversed") }}</span>{% endif %}</td>
+        <td class="num">{{ e.quantity }}</td>
+        <td class="num">{{ e.amount_cents|money }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">{{ t("user.account.history_empty") }}</p>{% endif %}
+</section>
+<section class="card">
+  <h2>{{ t("user.account.payments") }}</h2>
+  {% if payments %}
+  <div class="table-wrap"><table>
+    <tbody>
+    {% for p in payments %}
+      <tr><td>{{ p.time }}</td><td>{{ t("user.account.payment") }}</td><td class="num">{{ p.amount_cents|money }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">{{ t("user.account.payments_empty") }}</p>{% endif %}
+</section>
+<section class="card">
+  <p class="muted">{{ t("user.account.leave_hint") }}</p>
+  <form method="post" action="/account/leave">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button-secondary button-block">{{ t("user.account.leave") }}</button>
+  </form>
+</section>
+{% endblock %}

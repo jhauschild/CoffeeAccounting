@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "user/_totals.html" import totals_list %}
+{% block title %}{{ t("user.done.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card center">
+  <div class="success-mark{{ ' is-reversed' if event.reversed else '' }}" aria-hidden="true">{{ "↶" if event.reversed else "✓" }}</div>
+  <h1>{{ t("user.done.reversed") if event.reversed else t("user.done." ~ event.kind) }}</h1>
+  <dl class="totals">
+    <dt>{{ t("user.done.shots") }}</dt><dd>{{ event.quantity }}</dd>
+    <dt>{{ t("user.done.price") }}</dt><dd>{{ event.unit_price_cents|money }}</dd>
+    <dt>{{ t("user.done.amount") }}</dt><dd>{{ event.amount_cents|money }}</dd>
+    <dt>{{ t("user.done.time") }}</dt><dd>{{ event.time }}</dd>
+  </dl>
+</section>
+<section class="card">
+  <h2>{{ t("user.totals.title") }}</h2>
+  {{ totals_list(totals) }}
+</section>
+{% if event.can_undo %}
+<section class="card">
+  <form method="post" action="/coffee/undo/{{ event.id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p class="muted">{{ t("user.done.undo_hint") }}</p>
+    <button type="submit" class="button-danger button-block">{{ t("user.done.undo") }}</button>
+  </form>
+</section>
+{% endif %}
+<p><a class="button button-secondary button-block" href="/account">{{ t("user.done.account") }}</a></p>
+{% endblock %}

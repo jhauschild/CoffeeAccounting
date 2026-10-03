@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.profiles.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+{% include "user/_pending.html" %}
+<section class="card">
+  <h1>{{ t("user.profiles.title") }}</h1>
+  <p class="notice notice-warn card" role="note">{{ t("user.profiles.trust") }}</p>
+  <form method="get" action="/profiles" role="search" class="field">
+    <label for="q">{{ t("user.profiles.search") }}</label>
+    <input id="q" name="q" type="search" value="{{ q }}" maxlength="100" autocomplete="off">
+    <button type="submit" class="button-block">{{ t("user.profiles.search_button") }}</button>
+  </form>
+  {% if profiles %}
+  <ul class="plain profile-list">
+    {% for p in profiles %}
+    <li>
+      <form method="post" action="/profiles/select" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="user_id" value="{{ p.id }}">
+        <span class="profile-name">{{ p.display_name }}</span>
+        <span class="muted">{{ p.chair_short_name }}</span>
+        <button type="submit">{{ t("user.profiles.select") }}</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if more %}<p class="muted">{{ t("user.profiles.more", n=limit) }}</p>{% endif %}
+  {% else %}
+  <p>{{ t("user.profiles.none") }}</p>
+  {% endif %}
+  <p><a class="button button-secondary button-block" href="/register">{{ t("user.profiles.register") }}</a></p>
+</section>
+{% endblock %}

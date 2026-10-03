@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.register.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+{% include "user/_pending.html" %}
+{% if duplicates %}
+<section class="card notice notice-warn" role="alert">
+  <h2>{{ t("user.register.duplicate_title") }}</h2>
+  <p>{{ t("user.register.duplicate_body") }}</p>
+  <ul class="plain">
+    {% for p in duplicates %}
+    <li>
+      <form method="post" action="/profiles/select" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="user_id" value="{{ p.id }}">
+        <span class="profile-name">{{ p.display_name }}</span> <span class="muted">{{ p.chair_short_name }}</span>
+        <button type="submit">{{ t("user.register.duplicate_use") }}</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+<section class="card">
+  <h1>{{ t("user.register.title") }}</h1>
+  <form method="post" action="/register">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="registration_token" value="{{ registration_token }}">
+    {% if errors.token %}<p class="field-error" role="alert">{{ t(errors.token) }}</p>{% endif %}
+    <div class="field">
+      <label for="display_name">{{ t("user.register.name") }}</label>
+      <input id="display_name" name="display_name" type="text" required maxlength="{{ name_max }}" value="{{ values.display_name or '' }}" autocomplete="name">
+      <p class="muted">{{ t("user.register.name_hint") }}</p>
+      {% if errors.name %}<p class="field-error" role="alert">{{ t(errors.name, max=name_max) }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="chair_id">{{ t("user.register.chair") }}</label>
+      <select id="chair_id" name="chair_id" required>
+        <option value="">{{ t("user.register.chair_choose") }}</option>
+        {% for c in chairs %}
+        <option value="{{ c.id }}"{% if values.chair_id == c.id|string %} selected{% endif %}>{{ c.short_name }} – {{ c.full_name }}</option>
+        {% endfor %}
+      </select>
+      {% if errors.chair %}<p class="field-error" role="alert">{{ t(errors.chair) }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label class="checkbox" for="privacy_ack">
+        <input id="privacy_ack" name="privacy_ack" type="checkbox" value="1" required>
+        <span>{{ t("user.register.privacy") }} <a href="/privacy" target="_blank" rel="noopener">{{ t("user.register.privacy_link") }}</a></span>
+      </label>
+      {% if errors.ack %}<p class="field-error" role="alert">{{ t(errors.ack) }}</p>{% endif %}
+    </div>
+    {% if duplicates %}
+    <button type="submit" name="confirm_duplicate" value="1" class="button-block">{{ t("user.register.duplicate_continue") }}</button>
+    {% else %}
+    <button type="submit" class="button-block">{{ t("user.register.submit") }}</button>
+    {% endif %}
+  </form>
+  <p><a href="/profiles">{{ t("user.register.existing") }}</a></p>
+</section>
+{% endblock %}

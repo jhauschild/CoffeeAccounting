@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.edit.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>{{ t("user.edit.title") }}</h1>
+  <form method="post" action="/account/edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="display_name">{{ t("user.register.name") }}</label>
+      <input id="display_name" name="display_name" type="text" required maxlength="{{ name_max }}" value="{{ values.display_name or '' }}" autocomplete="name">
+      {% if errors.name %}<p class="field-error" role="alert">{{ t(errors.name, max=name_max) }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="chair_id">{{ t("user.register.chair") }}</label>
+      <select id="chair_id" name="chair_id" required>
+        {% for c in chairs %}
+        <option value="{{ c.id }}"{% if values.chair_id == c.id|string %} selected{% endif %}>{{ c.short_name }} – {{ c.full_name }}</option>
+        {% endfor %}
+      </select>
+      <p class="muted">{{ t("user.edit.chair_note") }}</p>
+      {% if errors.chair %}<p class="field-error" role="alert">{{ t(errors.chair) }}</p>{% endif %}
+    </div>
+    <button type="submit" class="button-block">{{ t("user.edit.save") }}</button>
+  </form>
+  <p><a href="/account">{{ t("user.edit.cancel") }}</a></p>
+</section>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ t(title) }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card notice notice-{{ 'error' if tone == 'error' else 'warn' }}">
+  <h1>{{ t(title) }}</h1>
+  <p>{{ t(body) }}</p>
+  {% if link %}<p><a class="button" href="{{ link[0] }}">{{ t(link[1]) }}</a></p>{% endif %}
+  <p><a href="/">{{ t("common.back_home") }}</a></p>
+</section>
+{% endblock %}

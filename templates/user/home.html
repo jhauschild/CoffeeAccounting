@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+{% if left %}<p class="card notice notice-ok" role="status">{{ t("user.home.left") }}</p>{% endif %}
+{% if ctx %}
+<section class="card stack">
+  <h1>{{ t("user.home.hello", name=ctx.user.display_name) }}</h1>
+  <p>{{ t("user.home.intro") }}</p>
+  <a class="button button-large button-block" href="/coffee/single">{{ t("user.home.single") }}</a>
+  <a class="button button-large button-block" href="/coffee/double">{{ t("user.home.double") }}</a>
+  <a class="button button-secondary button-block" href="/account">{{ t("user.home.account") }}</a>
+</section>
+{% else %}
+<section class="card stack">
+  <h1>{{ settings.app_title }}</h1>
+  <p>{{ t("user.home.guest_intro") }}</p>
+  <a class="button button-block" href="/join">{{ t("user.home.get_started") }}</a>
+</section>
+{% endif %}
+{% endblock %}

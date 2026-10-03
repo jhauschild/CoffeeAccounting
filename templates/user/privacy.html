@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.privacy.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card stack">
+  <h1>{{ t("user.privacy.title") }}</h1>
+  <p>{{ t("user.privacy.trust") }}</p>
+  <h2>{{ t("user.privacy.what_title") }}</h2>
+  <p>{{ t("user.privacy.what") }}</p>
+  <p>{{ t("user.privacy.not_stored") }}</p>
+  <h2>{{ t("user.privacy.why_title") }}</h2>
+  <p>{{ t("user.privacy.why") }}</p>
+  <h2>{{ t("user.privacy.who_title") }}</h2>
+  <p>{{ t("user.privacy.who") }}</p>
+  <h2>{{ t("user.privacy.retention_title") }}</h2>
+  <p>{{ retention }}</p>
+  <p>{{ t("user.privacy.removal") }}</p>
+  <h2>{{ t("user.privacy.contact_title") }}</h2>
+  <p>{% if contact %}{{ contact }}{% else %}{{ t("user.privacy.contact_none") }}{% endif %}</p>
+</section>
+{% endblock %}

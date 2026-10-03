@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.join.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+{% include "user/_pending.html" %}
+{% if gate_passed %}
+<section class="card stack">
+  <h1>{{ t("user.join.choose_title") }}</h1>
+  <p>{{ t("user.join.choose_new_hint") }}</p>
+  <a class="button button-large button-block" href="/register">{{ t("user.join.choose_new") }}</a>
+  <p>{{ t("user.join.choose_existing_hint") }}</p>
+  <a class="button button-large button-block button-secondary" href="/profiles">{{ t("user.join.choose_existing") }}</a>
+</section>
+{% else %}
+<section class="card">
+  <h1>{{ t("user.join.title") }}</h1>
+  <p>{{ t("user.join.intro") }}</p>
+  {% if error %}<p class="field-error" role="alert">{{ t("user.join.wrong") }}</p>{% endif %}
+  <form method="post" action="/join" autocomplete="off">
+    <div class="field">
+      <label for="code">{{ t("user.join.code") }}</label>
+      <input id="code" name="code" type="password" required maxlength="200" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+    </div>
+    <button type="submit" class="button-block">{{ t("user.join.submit") }}</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
