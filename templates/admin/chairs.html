@@ -1,0 +1,33 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.chairs.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.chairs.title") }}</h1>
+<section class="card">
+  <h2>{{ t("admin.chairs.create") }}</h2>
+  <form method="post" action="/admin/chairs" class="filters">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="full_name">{{ t("admin.chairs.full_name") }}</label><input id="full_name" name="full_name" type="text" maxlength="120" required></div>
+    <div class="field"><label for="short_name">{{ t("admin.chairs.short_name") }}</label><input id="short_name" name="short_name" type="text" maxlength="20" required></div>
+    <div class="field actions"><button type="submit">{{ t("admin.chairs.create_submit") }}</button></div>
+  </form>
+</section>
+<section class="card">
+  {% for row in rows %}{% set c = row.chair %}
+  <div class="chair-row">
+    <form method="post" action="/admin/chairs/{{ c.id }}/rename" class="filters">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="fn-{{ c.id }}">{{ t("admin.chairs.full_name") }}</label><input id="fn-{{ c.id }}" name="full_name" type="text" maxlength="120" value="{{ c.full_name }}" required></div>
+      <div class="field"><label for="sn-{{ c.id }}">{{ t("admin.chairs.short_name") }}</label><input id="sn-{{ c.id }}" name="short_name" type="text" maxlength="20" value="{{ c.short_name }}" required></div>
+      <div class="field actions"><button type="submit" class="button-secondary">{{ t("admin.chairs.rename") }}</button></div>
+    </form>
+    <p class="muted">{{ t("admin.chairs.users", n=row.users) }} · {{ t("admin.status.active" if c.active else "admin.status.inactive") }}</p>
+    <form method="post" action="/admin/chairs/{{ c.id }}/active">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="active" value="{{ 0 if c.active else 1 }}">
+      <button type="submit" class="{{ 'button-danger' if c.active else '' }}">{{ t("admin.chairs.deactivate" if c.active else "admin.chairs.reactivate") }}</button>
+    </form>
+  </div>
+  {% else %}<p class="muted">{{ t("admin.none") }}</p>{% endfor %}
+  <p class="muted">{{ t("admin.chairs.never_deleted") }}</p>
+</section>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.recovery.title") }}{% endblock %}
+{% block admin_content %}
+<section class="card narrow">
+  <h1>{{ t("admin.recovery.title") }}</h1>
+  <p class="notice notice-warn card">{{ t("admin.recovery.warning") }}</p>
+  <ul class="recovery-codes">
+    {% for c in codes %}<li><code>{{ c }}</code></li>{% endfor %}
+  </ul>
+  <p><a class="button" href="/admin">{{ t("admin.recovery.continue") }}</a></p>
+</section>
+{% endblock %}

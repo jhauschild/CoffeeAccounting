@@ -1,0 +1,20 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.setup.title") }}{% endblock %}
+{% block admin_content %}
+<section class="card narrow">
+  <h1>{{ t("admin.setup.title") }}</h1>
+  <p>{{ t("admin.setup.intro") }}</p>
+  <div class="qr-inline" aria-label="{{ t('admin.setup.qr_label') }}">{{ qr_svg|safe }}</div>
+  <p>{{ t("admin.setup.manual") }}</p>
+  <p><code class="secret">{{ secret }}</code></p>
+  {% if error %}<p class="notice notice-error card" role="alert">{{ t("admin.login.error." ~ error) }}</p>{% endif %}
+  <form method="post" action="/admin/totp/setup" class="stack" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="code">{{ t("admin.setup.code") }}</label>
+      <input id="code" name="code" type="text" inputmode="numeric" maxlength="12" autocomplete="one-time-code" required autofocus>
+    </div>
+    <button type="submit" class="button-block">{{ t("admin.setup.submit") }}</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.login.title") }}{% endblock %}
+{% block admin_content %}
+<section class="card narrow">
+  <h1>{{ t("admin.login.title") }}</h1>
+  {% if error %}<p class="notice notice-error card" role="alert">{{ t("admin.login.error." ~ error) }}</p>{% endif %}
+  <form method="post" action="/admin/login" class="stack" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field">
+      <label for="username">{{ t("admin.login.username") }}</label>
+      <input id="username" name="username" type="text" value="{{ username }}" maxlength="200" autocomplete="username" autocapitalize="none" required autofocus>
+    </div>
+    <div class="field">
+      <label for="password">{{ t("admin.login.password") }}</label>
+      <input id="password" name="password" type="password" maxlength="1000" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="button-block">{{ t("admin.login.submit") }}</button>
+  </form>
+</section>
+{% endblock %}

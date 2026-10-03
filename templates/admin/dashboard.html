@@ -1,0 +1,83 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import bal, period %}
+{% block admin_title %}{{ t("admin.dash.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.dash.title") }}</h1>
+<section class="card">
+  <h2>{{ t("admin.dash.totals") }}</h2>
+  <dl class="totals">
+    <dt>{{ t("admin.dash.shots") }}</dt><dd>{{ d.totals.consumed_shots }}</dd>
+    <dt>{{ t("admin.dash.consumed") }}</dt><dd>{{ d.totals.consumed_amount_cents|money }}</dd>
+    <dt>{{ t("admin.dash.paid") }}</dt><dd>{{ d.totals.paid_amount_cents|money }}</dd>
+    <dt>{{ t("admin.dash.balance") }}</dt><dd>{{ bal(d.totals.balance_cents) }}</dd>
+  </dl>
+  <p class="muted">{{ t("admin.balance_hint") }}</p>
+</section>
+<section class="card">
+  <h2>{{ t("admin.dash.periods") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th></th><th class="num">{{ t("admin.dash.shots") }}</th><th class="num">{{ t("admin.dash.consumed") }}</th><th class="num">{{ t("admin.dash.payments") }}</th></tr></thead>
+    <tbody>{{ period(t("admin.dash.today"), d.today) }}{{ period(t("admin.dash.week"), d.week) }}{{ period(t("admin.dash.month"), d.month) }}</tbody>
+  </table></div>
+</section>
+<section class="card">
+  <h2>{{ t("admin.dash.per_chair") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.chair") }}</th><th class="num">{{ t("admin.dash.shots") }}</th><th class="num">{{ t("admin.dash.consumed") }}</th><th class="num">{{ t("admin.dash.paid") }}</th><th class="num">{{ t("admin.dash.balance") }}</th></tr></thead>
+    <tbody>
+    {% for c in d.per_chair %}
+      <tr><th scope="row" data-label="{{ t('admin.csv.chair') }}">{{ c.short_name }}{% if not c.active %} <span class="badge">{{ t("admin.status.inactive") }}</span>{% endif %}</th>
+        <td class="num" data-label="{{ t('admin.dash.shots') }}">{{ c.shots }}</td>
+        <td class="num" data-label="{{ t('admin.dash.consumed') }}">{{ c.consumed_cents|money }}</td>
+        <td class="num" data-label="{{ t('admin.dash.paid') }}">{{ c.paid_cents|money }}</td>
+        <td class="num" data-label="{{ t('admin.dash.balance') }}">{{ bal(c.balance_cents) }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  <p class="muted">{{ t("admin.dash.per_chair_hint") }}</p>
+</section>
+<section class="card">
+  <h2>{{ t("admin.dash.price") }}</h2>
+  {% if d.current_price %}
+    <p class="big">{{ d.current_price.price_per_shot_cents|money }} <span class="muted">{{ t("admin.dash.per_shot") }}</span></p>
+  {% else %}
+    <p class="notice notice-warn card">{{ t("admin.dash.no_price") }}</p>
+  {% endif %}
+  {% if d.prices %}
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.prices.effective_from") }}</th><th class="num">{{ t("admin.prices.price") }}</th><th>{{ t("admin.csv.note") }}</th></tr></thead>
+    <tbody>{% for p in d.prices %}<tr>
+      <td data-label="{{ t('admin.prices.effective_from') }}">{{ p.effective_from|local }}</td>
+      <td class="num" data-label="{{ t('admin.prices.price') }}">{{ p.price_per_shot_cents|money }}</td>
+      <td data-label="{{ t('admin.csv.note') }}">{{ p.note or "" }}</td></tr>{% endfor %}</tbody></table></div>
+  {% endif %}
+</section>
+<section class="card">
+  <h2>{{ t("admin.dash.recent_consumption") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.csv.name") }}</th><th>{{ t("admin.csv.chair") }}</th><th>{{ t("admin.csv.type") }}</th><th class="num">{{ t("admin.csv.quantity") }}</th><th class="num">{{ t("admin.csv.amount") }}</th></tr></thead>
+    <tbody>
+    {% for e in d.recent_consumption %}<tr>
+      <td data-label="{{ t('admin.csv.date') }}">{{ e.created_at|local }}</td>
+      <td data-label="{{ t('admin.csv.name') }}"><a href="/admin/users/{{ e.user_id }}">{{ e.user_name }}</a></td>
+      <td data-label="{{ t('admin.csv.chair') }}">{{ e.chair_short }}</td>
+      <td data-label="{{ t('admin.csv.type') }}">{{ t("admin.type." ~ e.kind) }}</td>
+      <td class="num" data-label="{{ t('admin.csv.quantity') }}">{{ e.quantity }}</td>
+      <td class="num" data-label="{{ t('admin.csv.amount') }}">{{ e.amount_cents|money }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+<section class="card">
+  <h2>{{ t("admin.dash.recent_payments") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.csv.name") }}</th><th>{{ t("admin.csv.chair") }}</th><th>{{ t("admin.csv.type") }}</th><th class="num">{{ t("admin.csv.amount") }}</th></tr></thead>
+    <tbody>
+    {% for e in d.recent_payments %}<tr>
+      <td data-label="{{ t('admin.csv.date') }}">{{ e.created_at|local }}</td>
+      <td data-label="{{ t('admin.csv.name') }}"><a href="/admin/users/{{ e.user_id }}">{{ e.user_name }}</a></td>
+      <td data-label="{{ t('admin.csv.chair') }}">{{ e.chair_short }}</td>
+      <td data-label="{{ t('admin.csv.type') }}">{{ t("admin.type." ~ e.kind) }}</td>
+      <td class="num" data-label="{{ t('admin.csv.amount') }}">{{ e.amount_cents|money }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endblock %}

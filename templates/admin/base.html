@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{% block admin_title %}{{ t("admin.title") }}{% endblock %} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/admin.css">{% endblock %}
+{% block body_class %}admin{% endblock %}
+{% block header_extra %}
+{% if admin and show_nav|default(false) %}
+<nav class="admin-nav" aria-label="{{ t('admin.nav.label') }}">
+  <a href="/admin">{{ t("admin.nav.dashboard") }}</a>
+  <a href="/admin/users">{{ t("admin.nav.users") }}</a>
+  <a href="/admin/exports">{{ t("admin.nav.exports") }}</a>
+  <a href="/admin/qr">{{ t("admin.nav.qr") }}</a>
+  {% if is_global %}
+  <a href="/admin/chairs">{{ t("admin.nav.chairs") }}</a>
+  <a href="/admin/prices">{{ t("admin.nav.prices") }}</a>
+  <a href="/admin/audit">{{ t("admin.nav.audit") }}</a>
+  {% endif %}
+  <a href="/admin/account">{{ t("admin.nav.account") }} ({{ admin.username }})</a>
+  <form method="post" action="/admin/logout" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button-secondary">{{ t("admin.nav.logout") }}</button>
+  </form>
+</nav>
+{% endif %}
+{% endblock %}
+{% block content %}
+{% if flash_ok %}<div class="card notice notice-ok" role="status">{{ flash_ok }}</div>{% endif %}
+{% if flash_err %}<div class="card notice notice-error" role="alert">{{ flash_err }}</div>{% endif %}
+{% block admin_content %}{% endblock %}
+{% endblock %}

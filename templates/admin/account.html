@@ -1,0 +1,36 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.account.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.account.title") }}</h1>
+<section class="card">
+  <h2>{{ t("admin.account.password") }}</h2>
+  <form method="post" action="/admin/account/password" class="stack" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="current_password">{{ t("admin.account.current_password") }}</label>
+      <input id="current_password" name="current_password" type="password" autocomplete="current-password" required></div>
+    <div class="field"><label for="new_password">{{ t("admin.account.new_password", n=min_password_length) }}</label>
+      <input id="new_password" name="new_password" type="password" minlength="{{ min_password_length }}" autocomplete="new-password" required></div>
+    <div class="field"><label for="new_password2">{{ t("admin.account.new_password2") }}</label>
+      <input id="new_password2" name="new_password2" type="password" minlength="{{ min_password_length }}" autocomplete="new-password" required></div>
+    <button type="submit">{{ t("admin.account.change_password") }}</button>
+    <p class="muted">{{ t("admin.account.password_note") }}</p>
+  </form>
+</section>
+<section class="card">
+  <h2>{{ t("admin.account.sessions") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.account.session_started") }}</th><th>{{ t("admin.account.session_seen") }}</th><th>{{ t("admin.account.session_expires") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for s in sessions %}
+      <tr><td data-label="{{ t('admin.account.session_started') }}">{{ s.created_at|local }}</td>
+          <td data-label="{{ t('admin.account.session_seen') }}">{{ s.last_seen_at|local }}</td>
+          <td data-label="{{ t('admin.account.session_expires') }}">{{ s.expires_at|local }}</td>
+          <td>{% if s.id == current_session_id %}<span class="badge">{{ t("admin.account.this_session") }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+  <form method="post" action="/admin/account/sessions/revoke">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button-secondary">{{ t("admin.account.revoke_others") }}</button>
+  </form>
+</section>
+{% endblock %}

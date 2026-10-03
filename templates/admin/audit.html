@@ -1,0 +1,27 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import pager %}
+{% block admin_title %}{{ t("admin.audit.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.audit.title") }}</h1>
+<section class="card">
+  <form method="get" action="/admin/audit" class="filters">
+    <div class="field"><label for="action">{{ t("admin.audit.filter") }}</label>
+      <input id="action" name="action" type="search" value="{{ action }}" maxlength="64" placeholder="admin.login"></div>
+    <div class="field actions"><button type="submit">{{ t("admin.users.apply") }}</button></div>
+  </form>
+  <p class="muted">{{ t("admin.users.count", n=result.total) }}</p>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.audit.actor") }}</th><th>{{ t("admin.audit.action") }}</th><th>{{ t("admin.audit.target") }}</th><th>{{ t("admin.audit.details") }}</th><th>IP</th></tr></thead>
+    <tbody>
+    {% for a in result.rows %}<tr>
+      <td data-label="{{ t('admin.csv.date') }}">{{ a.created_at|local("%Y-%m-%d %H:%M:%S") }}</td>
+      <td data-label="{{ t('admin.audit.actor') }}">{{ a.actor }}</td>
+      <td data-label="{{ t('admin.audit.action') }}">{{ a.action }}</td>
+      <td data-label="{{ t('admin.audit.target') }}" class="wrap">{{ a.target_type or "" }} {{ a.target_id or "" }}</td>
+      <td data-label="{{ t('admin.audit.details') }}" class="wrap">{{ a.details }}</td>
+      <td data-label="IP">{{ a.source_ip or "" }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  {{ pager("/admin/audit", result.page, result.pages, {"action": action} if action else {}) }}
+</section>
+{% endblock %}

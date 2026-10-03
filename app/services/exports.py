@@ -147,7 +147,7 @@ def qr_urls() -> dict[str, str]:
     return {"single": f"{base}/coffee/single", "double": f"{base}/coffee/double"}
 
 
-def qr_svg(url: str, label: str, *, caption: str | None = None, standalone: bool = True) -> str:
+def qr_svg(url: str, label: str | None, *, caption: str | None = None, standalone: bool = True) -> str:
     """Labeled SVG QR code: large `label` above the code, `caption` (default: the URL) below.
 
     `standalone=True` includes the XML namespace and a title for use as a file; inline use in HTML
@@ -157,8 +157,8 @@ def qr_svg(url: str, label: str, *, caption: str | None = None, standalone: bool
     border = 4
     size = len(qr.matrix)
     width = size + 2 * border
-    label_h = 12
-    caption_h = 5
+    label_h = 12 if label else 0
+    caption_h = 5 if label else 0
     height = width + label_h + caption_h
     parts = []
     for y, row in enumerate(qr.matrix):
@@ -171,20 +171,25 @@ def qr_svg(url: str, label: str, *, caption: str | None = None, standalone: bool
                 parts.append(f"M{start + border} {y + border + label_h}h{x - start}v1h-{x - start}z")
             else:
                 x += 1
-    caption_text = escape(caption if caption is not None else url)
     ns = ' xmlns="http://www.w3.org/2000/svg"' if standalone else ""
-    return (
-        f'<svg{ns} viewBox="0 0 {width} {height}" role="img" aria-label="{escape(label)} QR code" '
-        f'class="qr-svg" shape-rendering="crispEdges">'
-        f'<title>{escape(label)}: {escape(url)}</title>'
-        f'<rect width="{width}" height="{height}" fill="#fff"/>'
-        f'<text x="{width / 2}" y="{label_h - 2.5}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
-        f'font-weight="700" font-size="9" fill="#000">{escape(label)}</text>'
-        f'<path d="{"".join(parts)}" fill="#000"/>'
-        f'<text x="{width / 2}" y="{height - 1.5}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
-        f'font-size="2.2" fill="#000">{caption_text}</text>'
-        f"</svg>"
-    )
+    font = 'font-family="Arial, Helvetica, sans-serif"'
+    name = label or "QR code"
+    out = [
+        f'<svg{ns} viewBox="0 0 {width} {height}" role="img" aria-label="{escape(name)} QR code" '
+        f'class="qr-svg" shape-rendering="crispEdges">',
+        f"<title>{escape(name)}: {escape(url)}</title>",
+        f'<rect width="{width}" height="{height}" fill="#fff"/>',
+    ]
+    if label:
+        out.append(f'<text x="{width / 2}" y="{label_h - 2.5}" text-anchor="middle" {font} font-weight="700" '
+                   f'font-size="9" fill="#000">{escape(label)}</text>')
+    out.append(f'<path d="{"".join(parts)}" fill="#000"/>')
+    if label:
+        caption_text = escape(caption if caption is not None else url)
+        out.append(f'<text x="{width / 2}" y="{height - 1.5}" text-anchor="middle" {font} font-size="2.2" '
+                   f'fill="#000">{caption_text}</text>')
+    out.append("</svg>")
+    return "".join(out)
 
 
 def write_qr_files(out_dir) -> list[str]:

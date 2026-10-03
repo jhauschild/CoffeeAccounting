@@ -1,0 +1,150 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import bal %}
+{% block admin_title %}{{ detail.user.display_name }}{% endblock %}
+{% block head_extra %}{{ super() }}<script src="/static/admin/adjust.js" defer></script>{% endblock %}
+{% block admin_content %}
+{% set u = detail.user %}
+{% set base = "/admin/users/" ~ u.id %}
+<p><a href="/admin/users">&larr; {{ t("admin.users.title") }}</a></p>
+<h1>{{ u.display_name }} <span class="muted">({{ u.chair.short_name }})</span>
+  <span class="badge">{{ t("admin.status." ~ u.status) }}</span></h1>
+{% if detail.merged_profiles %}
+<p class="muted">{{ t("admin.detail.includes_merged") }}: {% for m in detail.merged_profiles %}{{ m.display_name }} ({{ m.chair.short_name }}){{ ", " if not loop.last }}{% endfor %}</p>
+{% endif %}
+
+<section class="card">
+  <h2>{{ t("admin.detail.totals") }}</h2>
+  <dl class="totals">
+    <dt>{{ t("admin.csv.shots") }}</dt><dd>{{ detail.totals.consumed_shots }}</dd>
+    <dt>{{ t("admin.csv.consumed") }}</dt><dd>{{ detail.totals.consumed_amount_cents|money }}</dd>
+    <dt>{{ t("admin.csv.paid") }}</dt><dd>{{ detail.totals.paid_amount_cents|money }}</dd>
+    <dt>{{ t("admin.csv.balance") }}</dt><dd>{{ bal(detail.totals.balance_cents) }}</dd>
+  </dl>
+  <p class="muted">{{ t("admin.balance_hint") }}</p>
+</section>
+
+<div class="grid">
+<section class="card">
+  <h2>{{ t("admin.detail.payment") }}</h2>
+  <form method="post" action="{{ base }}/payment" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="pay_amount">{{ t("admin.detail.payment_amount", currency=settings.currency_symbol) }}</label>
+      <input id="pay_amount" name="amount" type="text" inputmode="decimal" maxlength="20" placeholder="12.50" required>
+      <p class="muted">{{ t("admin.detail.payment_hint") }}</p></div>
+    <div class="field"><label for="pay_note">{{ t("admin.csv.note") }}</label>
+      <input id="pay_note" name="note" type="text" maxlength="{{ note_max }}"></div>
+    {% if uncorrected %}
+    <div class="field"><label for="pay_corr">{{ t("admin.detail.correction_of") }}</label>
+      <select id="pay_corr" name="correction_of"><option value="">{{ t("admin.detail.no_correction") }}</option>
+      {% for p in uncorrected %}<option value="{{ p.payment.id }}">{{ p.payment.created_at|local }} – {{ p.payment.amount_cents|money }}</option>{% endfor %}</select></div>
+    {% endif %}
+    <button type="submit">{{ t("admin.detail.payment_submit") }}</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>{{ t("admin.detail.adjustment") }}</h2>
+  <form method="post" action="{{ base }}/adjustment" class="stack" data-adjust-form data-unit-price="{{ unit_price_plain }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="adj_qty">{{ t("admin.detail.adjust_quantity") }}</label>
+      <input id="adj_qty" name="quantity" type="text" inputmode="numeric" maxlength="8" placeholder="1" required></div>
+    <div class="field"><label for="adj_amount">{{ t("admin.detail.adjust_amount", currency=settings.currency_symbol) }}</label>
+      <input id="adj_amount" name="amount" type="text" inputmode="decimal" maxlength="20" placeholder="{{ unit_cents|money if unit_cents is not none else '' }}">
+      <p class="muted">{% if unit_cents is not none %}{{ t("admin.detail.adjust_hint", price=unit_cents|money) }}{% else %}{{ t("admin.detail.adjust_no_price") }}{% endif %}</p></div>
+    <div class="field"><label for="adj_note">{{ t("admin.csv.note") }}</label>
+      <input id="adj_note" name="note" type="text" maxlength="{{ note_max }}"></div>
+    <button type="submit">{{ t("admin.detail.adjust_submit") }}</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>{{ t("admin.detail.manage") }}</h2>
+  <form method="post" action="{{ base }}/rename" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="display_name">{{ t("admin.detail.rename") }}</label>
+      <input id="display_name" name="display_name" type="text" value="{{ u.display_name }}" maxlength="60" required></div>
+    <button type="submit" class="button-secondary">{{ t("admin.detail.rename_submit") }}</button>
+  </form>
+  <hr>
+  <form method="post" action="{{ base }}/status" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if u.status == "active" %}
+      <input type="hidden" name="active" value="0">
+      <button type="submit" class="button-danger">{{ t("admin.detail.deactivate") }}</button>
+      <p class="muted">{{ t("admin.detail.deactivate_hint") }}</p>
+    {% else %}
+      <input type="hidden" name="active" value="1">
+      <button type="submit">{{ t("admin.detail.reactivate") }}</button>
+    {% endif %}
+  </form>
+  <hr>
+  <form method="post" action="{{ base }}/sessions/revoke" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button-secondary">{{ t("admin.detail.revoke_sessions", n=detail.active_sessions) }}</button>
+  </form>
+  {% if is_global %}
+  <hr>
+  <form method="post" action="{{ base }}/chair" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="chair_id">{{ t("admin.detail.change_chair") }}</label>
+      <select id="chair_id" name="chair_id">
+      {% for c in chairs %}<option value="{{ c.id }}" {{ "selected" if c.id == u.chair_id }}>{{ c.short_name }} – {{ c.full_name }}</option>{% endfor %}</select></div>
+    <button type="submit" class="button-secondary">{{ t("admin.detail.change_chair_submit") }}</button>
+  </form>
+  <p><a class="button button-secondary" href="{{ base }}/merge">{{ t("admin.detail.merge") }}</a></p>
+  {% endif %}
+</section>
+</div>
+
+<section class="card">
+  <h2>{{ t("admin.detail.consumption") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.csv.type") }}</th><th>{{ t("admin.csv.chair") }}</th><th class="num">{{ t("admin.csv.quantity") }}</th><th class="num">{{ t("admin.csv.unit_price") }}</th><th class="num">{{ t("admin.csv.amount") }}</th><th>{{ t("admin.csv.note") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for r in detail.consumption %}{% set e = r.event %}<tr>
+      <td data-label="{{ t('admin.csv.date') }}">{{ e.created_at|local }}</td>
+      <td data-label="{{ t('admin.csv.type') }}">{{ t("admin.type." ~ e.type) }}{% if r.reversed %} <span class="badge">{{ t("admin.detail.reversed") }}</span>{% endif %}</td>
+      <td data-label="{{ t('admin.csv.chair') }}">{{ r.chair_short }}</td>
+      <td class="num" data-label="{{ t('admin.csv.quantity') }}">{{ e.quantity }}</td>
+      <td class="num" data-label="{{ t('admin.csv.unit_price') }}">{{ e.unit_price_cents|money }}</td>
+      <td class="num" data-label="{{ t('admin.csv.amount') }}">{{ e.amount_cents|money }}</td>
+      <td data-label="{{ t('admin.csv.note') }}">{{ e.note or "" }}{% if r.admin_name %} <span class="muted">({{ r.admin_name }})</span>{% endif %}</td>
+      <td>{% if r.can_reverse %}
+        <form method="post" action="{{ base }}/events/{{ e.id }}/reverse" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input name="note" type="text" maxlength="{{ note_max }}" placeholder="{{ t('admin.csv.note') }}" aria-label="{{ t('admin.csv.note') }}">
+          <button type="submit" class="button-danger">{{ t("admin.detail.reverse") }}</button>
+        </form>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="8" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+
+<section class="card">
+  <h2>{{ t("admin.detail.payments") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.csv.type") }}</th><th>{{ t("admin.csv.chair") }}</th><th class="num">{{ t("admin.csv.amount") }}</th><th>{{ t("admin.csv.note") }}</th></tr></thead>
+    <tbody>
+    {% for r in detail.payments %}{% set p = r.payment %}<tr>
+      <td data-label="{{ t('admin.csv.date') }}">{{ p.created_at|local }}</td>
+      <td data-label="{{ t('admin.csv.type') }}">{{ t("admin.type.correction") if p.correction_of_id else t("admin.type.payment") }}{% if r.corrected %} <span class="badge">{{ t("admin.detail.corrected") }}</span>{% endif %}</td>
+      <td data-label="{{ t('admin.csv.chair') }}">{{ r.chair_short }}</td>
+      <td class="num" data-label="{{ t('admin.csv.amount') }}">{{ p.amount_cents|money }}</td>
+      <td data-label="{{ t('admin.csv.note') }}">{{ p.note or "" }}{% if r.admin_name %} <span class="muted">({{ r.admin_name }})</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+
+<section class="card">
+  <h2>{{ t("admin.detail.audit") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.audit.actor") }}</th><th>{{ t("admin.audit.action") }}</th><th>{{ t("admin.audit.details") }}</th></tr></thead>
+    <tbody>
+    {% for a in detail.audit %}<tr>
+      <td data-label="{{ t('admin.csv.date') }}">{{ a.created_at|local }}</td>
+      <td data-label="{{ t('admin.audit.actor') }}">{{ a.actor }}</td>
+      <td data-label="{{ t('admin.audit.action') }}">{{ a.action }}</td>
+      <td data-label="{{ t('admin.audit.details') }}" class="wrap">{{ a.details }}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endblock %}

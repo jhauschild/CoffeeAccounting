@@ -1,0 +1,60 @@
+/* Admin area styles (on top of app.css): desktop tables, mobile cards, print sheets for the QR page. */
+
+body.admin .container { max-width: 72rem; }
+
+.admin-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem; }
+.admin-nav a { color: var(--text); text-decoration: none; padding: 0.5rem 0.25rem; font-weight: 600; min-height: var(--tap); display: inline-flex; align-items: center; }
+.admin-nav a:hover { text-decoration: underline; }
+.inline-form { display: inline-flex; gap: 0.5rem; align-items: center; margin: 0; }
+.inline-form input[type="text"] { min-height: 2.5rem; width: 10rem; }
+.inline-form button { min-height: 2.5rem; padding: 0.3rem 0.8rem; }
+
+.narrow { max-width: 28rem; margin-left: auto; margin-right: auto; }
+.grid { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+.filters { display: grid; gap: 0.75rem 1rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); align-items: end; }
+.filters .field { margin-bottom: 0; }
+.actions button { width: 100%; }
+.big { font-size: 1.8rem; font-weight: 700; margin: 0 0 0.5rem; }
+.neg { color: var(--ok); }
+.badge { display: inline-block; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 999px; font-size: 0.8rem; font-weight: 600; color: var(--muted); vertical-align: middle; }
+.wrap { overflow-wrap: anywhere; word-break: break-word; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 1rem 0; }
+.secret { font-size: 1.1rem; letter-spacing: 0.08em; overflow-wrap: anywhere; }
+.recovery-codes { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; font-size: 1.1rem; }
+.pager { display: flex; gap: 1rem; align-items: center; justify-content: center; margin-top: 1rem; }
+.candidate { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+.chair-row { padding-bottom: 1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
+.qr-inline { max-width: 14rem; margin: 0 auto 1rem; background: #fff; padding: 0.5rem; }
+.qr-inline svg, .qr-code svg { width: 100%; height: auto; display: block; }
+
+/* Phones: rows become cards. */
+@media (max-width: 47.99rem) {
+  .table-cards thead { position: absolute; left: -9999px; }
+  .table-cards tr { display: block; border-bottom: 2px solid var(--border); padding: 0.5rem 0; }
+  .table-cards td, .table-cards th[scope="row"] { display: flex; justify-content: space-between; gap: 1rem; border: 0; padding: 0.2rem 0.25rem; text-align: right; }
+  .table-cards td::before, .table-cards th[scope="row"]::before { content: attr(data-label); color: var(--muted); font-weight: 600; text-align: left; }
+  .table-cards td:not([data-label]):empty { display: none; }
+  .inline-form input[type="text"] { width: 100%; }
+}
+@media (min-width: 48rem) {
+  .grid { grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); align-items: start; }
+}
+
+/* QR page: one code per half page, large labels (PROMPT §6). */
+.qr-sheet { text-align: center; }
+.qr-label { font-size: 3rem; font-weight: 800; letter-spacing: 0.1em; margin: 0 0 0.5rem; }
+.qr-code { max-width: 22rem; margin: 0 auto; background: #fff; }
+.qr-price { font-size: 1.25rem; font-weight: 600; margin: 0.5rem 0 0; }
+.qr-url { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; margin: 0.25rem 0 0; }
+.qr-line { font-size: 1.4rem; font-weight: 600; margin: 0.5rem 0 0; }
+
+@media print {
+  .no-print, .admin-nav, .flash { display: none !important; }
+  body.admin, body.admin .card { background: #fff; color: #000; border: 0; }
+  body.admin .container { max-width: none; padding: 0; }
+  .qr-sheet { height: 48vh; padding: 0; margin: 0; page-break-inside: avoid; break-inside: avoid; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .qr-sheet + .qr-sheet { page-break-before: auto; }
+  .qr-label { font-size: 4rem; color: #000; margin: 0; }
+  .qr-code { max-width: 20vh; min-width: 14rem; }
+  .qr-url, .qr-price, .qr-line { color: #000; }
+}

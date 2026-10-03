@@ -1,0 +1,45 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import bal, pager %}
+{% block admin_title %}{{ t("admin.users.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.users.title") }}</h1>
+<section class="card">
+  <form method="get" action="/admin/users" class="filters">
+    <div class="field"><label for="q">{{ t("admin.users.search") }}</label>
+      <input id="q" name="q" type="search" value="{{ q }}" maxlength="80"></div>
+    <div class="field"><label for="chair">{{ t("admin.csv.chair") }}</label>
+      <select id="chair" name="chair"><option value="">{{ t("admin.users.all_chairs") }}</option>
+      {% for c in chairs %}<option value="{{ c.id }}" {{ "selected" if chair == c.id|string }}>{{ c.short_name }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="status">{{ t("admin.csv.status") }}</label>
+      <select id="status" name="status"><option value="">{{ t("admin.users.all_statuses") }}</option>
+      <option value="active" {{ "selected" if status == "active" }}>{{ t("admin.status.active") }}</option>
+      <option value="inactive" {{ "selected" if status == "inactive" }}>{{ t("admin.status.inactive") }}</option></select></div>
+    <div class="field"><label for="sort">{{ t("admin.users.sort") }}</label>
+      <select id="sort" name="sort">
+      {% for key in ("balance", "name", "consumption", "activity") %}<option value="{{ key }}" {{ "selected" if sort == key }}>{{ t("admin.users.sort_" ~ key) }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="dir">{{ t("admin.users.direction") }}</label>
+      <select id="dir" name="dir"><option value="desc" {{ "selected" if dir == "desc" }}>{{ t("admin.users.desc") }}</option>
+      <option value="asc" {{ "selected" if dir == "asc" }}>{{ t("admin.users.asc") }}</option></select></div>
+    <div class="field actions"><button type="submit">{{ t("admin.users.apply") }}</button></div>
+  </form>
+  <p><a class="button button-secondary" href="/admin/users/export.csv?{{ query|urlencode }}">{{ t("admin.users.export") }}</a>
+     <span class="muted">{{ t("admin.users.count", n=result.total) }}</span></p>
+</section>
+<section class="card">
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.name") }}</th><th>{{ t("admin.csv.chair") }}</th><th class="num">{{ t("admin.csv.shots") }}</th><th class="num">{{ t("admin.csv.consumed") }}</th><th class="num">{{ t("admin.csv.paid") }}</th><th class="num">{{ t("admin.csv.balance") }}</th><th>{{ t("admin.csv.last_activity") }}</th><th>{{ t("admin.csv.status") }}</th></tr></thead>
+    <tbody>
+    {% for u in result.rows %}<tr>
+      <td data-label="{{ t('admin.csv.name') }}"><a href="/admin/users/{{ u.id }}">{{ u.display_name }}</a></td>
+      <td data-label="{{ t('admin.csv.chair') }}">{{ u.chair_short }}</td>
+      <td class="num" data-label="{{ t('admin.csv.shots') }}">{{ u.shots }}</td>
+      <td class="num" data-label="{{ t('admin.csv.consumed') }}">{{ u.consumed_cents|money }}</td>
+      <td class="num" data-label="{{ t('admin.csv.paid') }}">{{ u.paid_cents|money }}</td>
+      <td class="num" data-label="{{ t('admin.csv.balance') }}">{{ bal(u.balance_cents) }}</td>
+      <td data-label="{{ t('admin.csv.last_activity') }}">{{ u.last_activity_at|local if u.last_activity_at else "–" }}</td>
+      <td data-label="{{ t('admin.csv.status') }}">{{ t("admin.status." ~ u.status) }}</td></tr>
+    {% else %}<tr><td colspan="8" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  {{ pager("/admin/users", result.page, result.pages, query) }}
+</section>
+{% endblock %}
