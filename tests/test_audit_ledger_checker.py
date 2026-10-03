@@ -136,16 +136,12 @@ def test_cli_exit_code_on_corruption(db_path, seed):
 
 
 # ----- gaps: corruption that changes totals but is not reported --------------------------------
-@pytest.mark.xfail(strict=True, reason="GAP(low): check-ledger does not compare a reversal's chair_id with the "
-                                       "original's, so per-chair totals can silently stop netting out")
 def test_reversal_with_different_chair_is_reported(db, db_path, seed):
     raw(db_path, rev_of(seed, seed["single"], chair_id=seed["bob"].chair_id.hex))
     db.rollback()  # new snapshot (WAL)
     assert not check_ledger(db).ok
 
 
-@pytest.mark.xfail(strict=True, reason="GAP(low): check-ledger does not verify that a payment correction belongs "
-                                       "to the same effective user as the corrected payment")
 def test_correction_for_another_users_payment_is_reported(db, db_path, seed):
     raw(db_path, pay(seed, user_id=seed["bob"].id.hex, chair_id=seed["bob"].chair_id.hex, amount_cents=-1000,
                      correction_of_id=seed["pay"].id.hex))

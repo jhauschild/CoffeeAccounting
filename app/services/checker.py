@@ -34,6 +34,16 @@ class CheckReport:
         return not self.problems
 
 
+def _zero_amount_ok(e, by_id) -> bool:
+    """Amount 0 at a non-zero price is legitimate only for an adjustment or its exact reversal."""
+    if e.type == "adjustment":
+        return True
+    if e.type == "reversal":
+        orig = by_id.get(e.reversal_of_id)
+        return orig is not None and orig.type == "adjustment" and orig.amount_cents == 0
+    return False
+
+
 def check_ledger(db: Session) -> CheckReport:
     problems: list[Problem] = []
 
@@ -89,7 +99,7 @@ def check_ledger(db: Session) -> CheckReport:
             bad("zero_quantity", f"{ref} has quantity 0")
         if (e.quantity > 0 and e.amount_cents < 0) or (e.quantity < 0 and e.amount_cents > 0):
             bad("sign_mismatch", f"{ref} has quantity and amount with opposite signs")
-        if e.amount_cents == 0 and e.unit_price_cents != 0 and e.type != "adjustment":
+        if e.amount_cents == 0 and e.unit_price_cents != 0 and not _zero_amount_ok(e, by_id):
             bad("zero_amount", f"{ref} has amount 0 at a non-zero price")
         if e.type == "adjustment" and e.admin_id is None:
             bad("adjustment_admin", f"{ref} is an adjustment without admin")
@@ -130,12 +140,23 @@ def check_ledger(db: Session) -> CheckReport:
                 bad("reversal_unit_price", f"{ref} unit price differs from event {orig.id}")
             if e.user_id != orig.user_id:
                 bad("reversal_user", f"{ref} belongs to a different user than event {orig.id}")
+            if e.chair_id != orig.chair_id:
+                bad("reversal_chair", f"{ref} belongs to a different chair than event {orig.id}")
     for orig_id, revs in reversals_of.items():
         if len(revs) > 1:
             bad("double_reversal", f"event {orig_id} is reversed {len(revs)} times")
 
     # payments
     corrections: dict = {}
+    payment_by_id = {p.id: p for p in payments}
+
+    def effective(uid):
+        seen = set()
+        while uid in users and users[uid].merged_into_id in users and uid not in seen:
+            seen.add(uid)
+            uid = users[uid].merged_into_id
+        return uid
+
     for p in payments:
         ref = f"payment event {p.id}"
         if p.user_id not in users:
@@ -148,6 +169,10 @@ def check_ledger(db: Session) -> CheckReport:
             corrections[p.correction_of_id] = corrections.get(p.correction_of_id, 0) + 1
             if p.correction_of_id not in payment_ids:
                 bad("orphan_correction", f"{ref} corrects missing payment {p.correction_of_id}")
+            else:
+                target = payment_by_id[p.correction_of_id]
+                if effective(p.user_id) != effective(target.user_id):
+                    bad("correction_user", f"{ref} belongs to a different user than corrected payment {target.id}")
     for pid, n in corrections.items():
         if n > 1:
             bad("double_correction", f"payment {pid} is corrected {n} times")
