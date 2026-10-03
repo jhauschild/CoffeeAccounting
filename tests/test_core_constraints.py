@@ -83,12 +83,15 @@ def test_consumption_check_constraints(base, overrides):
         insert_event(engine, row)
 
 
-def test_zero_amount_only_for_zero_price_or_adjustment(base):
+def test_zero_amount_only_for_zero_price_adjustment_or_reversal(base):
     engine, user, price, admin = base
     orig = insert_event(engine, _event_row(user, price))
-    with pytest.raises(IntegrityError):  # reversal with amount 0 at non-zero price
-        insert_event(engine, _event_row(user, price, type="reversal", quantity=-1, amount_cents=0,
-                                        reversal_of_id=orig["id"]))
+    with pytest.raises(IntegrityError):  # a coffee with amount 0 at a non-zero price
+        insert_event(engine, _event_row(user, price, amount_cents=0))
+    # A reversal may carry amount 0 (it reverses a zero-amount adjustment); a row-level CHECK cannot
+    # see the original, so `check-ledger` (zero_amount / reversal_amount) guards the bad pairing.
+    insert_event(engine, _event_row(user, price, type="reversal", quantity=-1, amount_cents=0,
+                                    reversal_of_id=orig["id"]))
 
 
 def test_non_reversal_cannot_reference_an_event(base):
