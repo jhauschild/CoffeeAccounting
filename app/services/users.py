@@ -19,7 +19,9 @@ from app.timeutil import utcnow
 ACTOR_USER = "user"
 ACTOR_ADMIN = "admin"
 
-_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+                          # letters whose diacritic does not decompose under NFKD
+                          "ł": "l", "ø": "o", "đ": "d", "ı": "i", "æ": "ae", "œ": "oe"})
 _FOLD = (("ae", "a"), ("oe", "o"), ("ue", "u"))
 
 
