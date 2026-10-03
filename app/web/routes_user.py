@@ -10,7 +10,9 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Form, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -145,9 +147,21 @@ def join_submit(request: Request, code: str = Form("")):
 
 
 # ----- onboarding -----------------------------------------------------------------------------
-def _finish_onboarding(request: Request, result: onboarding.OnboardResult) -> Response:
-    if result.event is not None:
-        target = f"/coffee/done/{result.event.id}"
+def _registration_coffee_id(user: User) -> uuid.UUID | None:
+    """A repeated registration submit arrives without the (already cleared) pending cookie; the
+    coffee recorded by the first submit has exactly the profile's creation timestamp."""
+    with read_session() as db:
+        return db.scalars(select(ConsumptionEvent.id).where(
+            ConsumptionEvent.user_id == user.id, ConsumptionEvent.type.in_(COFFEE_KINDS),
+            ConsumptionEvent.created_at == user.created_at)).first()
+
+
+def _finish_onboarding(request: Request, result: onboarding.OnboardResult, *, registration: bool = False) -> Response:
+    event_id = result.event.id if result.event is not None else None
+    if event_id is None and registration and not result.created:
+        event_id = _registration_coffee_id(result.user)
+    if event_id is not None:
+        target = f"/coffee/done/{event_id}"
     elif result.coffee_status == onboarding.COFFEE_EXPIRED:
         target = "/account?notice=expired"
     elif result.coffee_status == onboarding.COFFEE_NO_PRICE:
@@ -159,6 +173,23 @@ def _finish_onboarding(request: Request, result: onboarding.OnboardResult) -> Re
     deps.clear_pending_cookie(response)
     deps.forget_user(request)
     return response
+
+
+async def _csrf_onboarding(request: Request) -> None:
+    """CSRF for /register and /profiles/select: a token bound to the user session or to the gate
+    cookie is accepted, so re-submitting a form after the session was created (Back, double tap)
+    reaches the idempotent handler instead of failing."""
+    ctx = await run_in_threadpool(deps.current_user, request)
+    form = await request.form()
+    token = form.get(tokens.CSRF_FIELD)
+    candidates = []
+    if ctx is not None:
+        candidates.append(("user", str(ctx.session.id)))
+    gate_cookie = request.cookies.get(deps.GATE_COOKIE)
+    if gate_cookie and gate.verify_gate_cookie(gate_cookie):
+        candidates.append(("gate", gate_cookie))
+    if not any(tokens.verify_csrf(scope, key, token) for scope, key in candidates):
+        raise deps.CSRFError()
 
 
 def _old_session_id(request: Request) -> uuid.UUID | None:
@@ -194,7 +225,7 @@ def register_page(request: Request, db: Session = Depends(deps.get_read_db)):
     return _register_page(request, db, token=tokens.make_registration_token(), values={})
 
 
-@router.post("/register", dependencies=[Depends(deps.require_gate), Depends(deps.require_csrf)])
+@router.post("/register", dependencies=[Depends(deps.require_gate), Depends(_csrf_onboarding)])
 def register_submit(request: Request, display_name: str = Form(""), chair_id: str = Form(""),
                     privacy_ack: str = Form(""), registration_token: str = Form(""),
                     confirm_duplicate: str = Form("")):
@@ -227,7 +258,7 @@ def register_submit(request: Request, display_name: str = Form(""), chair_id: st
         with read_session() as db:
             return _register_page(request, db, token=token, values=values,
                                   errors={"name": "user.register.error_name"}, status=400)
-    return _finish_onboarding(request, result)
+    return _finish_onboarding(request, result, registration=True)
 
 
 @router.get("/profiles", dependencies=[Depends(deps.require_gate)])
@@ -243,7 +274,7 @@ def profiles_page(request: Request, q: str = ""):
         "q": q, "pending_notice": notice})
 
 
-@router.post("/profiles/select", dependencies=[Depends(deps.require_gate), Depends(deps.require_csrf)])
+@router.post("/profiles/select", dependencies=[Depends(deps.require_gate), Depends(_csrf_onboarding)])
 def profiles_select(request: Request, user_id: str = Form("")):
     uid = deps.parse_uuid(user_id)
     if uid is None:
