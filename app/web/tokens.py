@@ -68,4 +68,4 @@ def csrf_token(scope: str, key: str) -> str:
 def verify_csrf(scope: str, key: str | None, token: str | None) -> bool:
     if not key or not token or not isinstance(token, str) or len(token) > 128:
         return False
-    return hmac.compare_digest(csrf_token(scope, key), token)
+    return hmac.compare_digest(csrf_token(scope, key).encode("utf-8"), token.encode("utf-8"))

@@ -63,7 +63,7 @@ def unsign(purpose: str, token: str | None, *, max_age: int, now: datetime | Non
         expected = _b64e(hmac.new(_key(purpose, extra), raw.encode("ascii"), hashlib.sha256).digest())
     except UnicodeEncodeError:
         return None
-    if not hmac.compare_digest(expected, sig):
+    if not hmac.compare_digest(expected.encode("utf-8"), sig.encode("utf-8")):
         return None
     try:
         payload = json.loads(_b64d(raw))

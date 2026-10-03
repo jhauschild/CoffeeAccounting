@@ -186,8 +186,6 @@ def test_scan_token_for_other_kind_or_purpose_rejected(client, db, user, price, 
     assert events(db) == []
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: signing.unsign/verify_csrf pass non-ASCII str to hmac.compare_digest "
-                                       "-> TypeError -> 500 instead of a 400 rejection")
 def test_non_ascii_scan_token_signature_is_rejected_not_500(client, db, user, price, login):
     login(user)
     raw, _sig = scan_token(client, "single").split(".")
@@ -196,7 +194,6 @@ def test_non_ascii_scan_token_signature_is_rejected_not_500(client, db, user, pr
     assert events(db) == []
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: verify_csrf passes non-ASCII token to hmac.compare_digest -> 500")
 def test_non_ascii_csrf_token_on_undo_is_rejected_not_500(client, db, user, price, login):
     login(user)
     eid = event_id_from(post_scan(client, "single"))
