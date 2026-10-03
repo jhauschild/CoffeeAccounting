@@ -10,8 +10,8 @@ Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
 | 0.2 | Resolve plan decisions | - | 0.1 | done | D1 squash, D2 yes, D3 yes (V2-CONTRACT.md) |
 | 0.3 | V2-CONTRACT.md and this ledger | - | 0.2 | done | |
 | 1.1 | Squash migration, models, CHECKs; downgrade/upgrade/alembic check | H | 0.3 | done | 20 new schema tests pass; alembic up/down/up/check clean; 14 v1 test files known-broken, see docs/status/task-1.1.md |
-| 1.2 | Config additions, passwords.py | L | 1.1 | todo | |
-| 1.3 | Ledger: kind, idempotency, collector_admin_id, month shots, set_balance | H | 1.1 | todo | |
+| 1.2 | Config additions, passwords.py | L | 1.1 | done | settings, passwords.py, keys.py (HKDF); 538 passed at merge |
+| 1.3 | Ledger: kind, idempotency, collector_admin_id, month shots, set_balance | H | 1.1 | done | collector, bookkeeping, set_balance, month shots, own-balance rule; 30 tests |
 | 1.4 | groups.py, remittances, check-ledger additions | H | 1.3 | todo | |
 | 1.5 | authz by own chair, overview.py | L | 1.3 | todo | |
 | 2.1 | Mailer interface, memory and file backends, caps | L | 1.2 | todo | |
