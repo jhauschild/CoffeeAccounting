@@ -39,3 +39,37 @@ def make_real_admin(role="global", chairs=(), username="boss", password=PASSWORD
 
 def current_code(secret: str, offset_steps: int = 0) -> str:
     return pyotp.TOTP(secret).at(utcnow().timestamp() + 30 * offset_steps)
+
+
+# ----- web helpers ------------------------------------------------------------------------------
+import re  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.models import AdminSession  # noqa: E402
+from app.services.admin_auth import ADMIN_COOKIE  # noqa: E402
+from app.web import tokens  # noqa: E402
+
+CSRF_RE = re.compile(r'name="csrf_token" value="([^"]+)"')
+
+
+def login_as(client: TestClient, admin_id) -> str:
+    """Give `client` a complete admin session (no password/TOTP round trip); returns its CSRF token."""
+    from app.models import AdminUser
+    with write_session() as w:
+        admin = w.get(AdminUser, admin_id)
+        session, raw = admin_auth._new_session(w, admin, verified=True, now=utcnow())
+        csrf = tokens.csrf_token("admin", session.csrf_secret)
+    client.cookies.set(ADMIN_COOKIE, raw, path="/admin")
+    return csrf
+
+
+def new_client(app) -> TestClient:
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def page_csrf(client: TestClient, path: str) -> str:
+    html = client.get(path).text
+    m = CSRF_RE.search(html)
+    assert m, f"no csrf token on {path}"
+    return m.group(1)

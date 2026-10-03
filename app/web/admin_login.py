@@ -95,10 +95,8 @@ def setup_form(request: Request, pair=Depends(ad.live_admin_session)):
     if admin.totp_enabled:
         raise Redirect("/admin")
     with write_session() as db:
-        db.add(admin)
         secret = admin_auth.begin_enrollment(db, admin)
-        uri = admin_auth.totp_uri(admin)
-    return _setup_page(request, session, admin, secret, uri)
+    return _setup_page(request, session, admin, secret, admin_auth.totp_uri(admin, secret))
 
 
 def _setup_page(request, session, admin, secret, uri, *, error=None, status_code=200):
@@ -115,9 +113,8 @@ def setup_submit(request: Request, code: str = Form("", max_length=64), pair=Dep
     if admin.totp_enabled:
         raise Redirect("/admin")
     with write_session() as db:
-        db.add(admin)
         secret = admin_auth.begin_enrollment(db, admin)
-        uri = admin_auth.totp_uri(admin)
+        uri = admin_auth.totp_uri(admin, secret)
         outcome = admin_auth.complete_enrollment(db, session=session, admin=admin, code=code, ip=client_ip(request))
         db.expunge_all()
     if outcome.status != "ok":

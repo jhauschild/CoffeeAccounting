@@ -167,7 +167,7 @@ def page(request: Request, ctx: AdminContext | None, template: str, context: dic
          status_code: int = 200):
     """Render an admin template with the standard context (csrf token, admin, flash message)."""
     data = {"admin": ctx.admin if ctx else None, "is_global": bool(ctx and ctx.is_global),
-            "csrf_token": ctx.csrf if ctx else ""}
+            "csrf_token": ctx.csrf if ctx else "", "show_nav": ctx is not None}
     msg = request.query_params.get("msg")
     err = request.query_params.get("err")
     data["flash_ok"] = t(f"admin.msg.{msg}") if msg and has(f"admin.msg.{msg}") else None

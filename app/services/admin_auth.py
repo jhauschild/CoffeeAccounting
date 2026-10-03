@@ -335,12 +335,21 @@ def new_recovery_codes() -> list[str]:
     return codes
 
 
-def totp_uri(admin: AdminUser) -> str:
-    return pyotp.TOTP(admin.totp_secret).provisioning_uri(name=admin.username, issuer_name=get_settings().app_title)
+def totp_uri(admin: AdminUser, secret: str) -> str:
+    return pyotp.TOTP(secret).provisioning_uri(name=admin.username, issuer_name=get_settings().app_title)
+
+
+def _attached(db: Session, admin: AdminUser) -> AdminUser:
+    """The admin as loaded in `db` (callers may hold a detached copy from an earlier read session)."""
+    current = db.get(AdminUser, admin.id)
+    if current is None:
+        raise NotFound("administrator not found")
+    return current
 
 
 def begin_enrollment(db: Session, admin: AdminUser) -> str:
     """Make sure the admin has a (not yet enabled) TOTP secret; returns it. Refuses if enabled."""
+    admin = _attached(db, admin)
     if admin.totp_enabled:
         raise Conflict("TOTP is already enabled")
     if not admin.totp_secret:
@@ -457,6 +466,7 @@ def verify_second_factor(db: Session, *, session: AdminSession, admin: AdminUser
                          now: datetime | None = None) -> LoginOutcome:
     """TOTP or recovery code for a pending session; success swaps it for a full session."""
     now = _now(now)
+    admin = _attached(db, admin)
     if _limited(db, username=admin.username, ip=ip, step="totp", admin=admin, now=now):
         return LoginOutcome("limited")
     method = None
@@ -482,6 +492,7 @@ def complete_enrollment(db: Session, *, session: AdminSession, admin: AdminUser,
     A pending session is swapped for a full one; an already complete session is kept.
     """
     now = _now(now)
+    admin = _attached(db, admin)
     if admin.totp_enabled:
         raise Conflict("TOTP is already enabled")
     if _limited(db, username=admin.username, ip=ip, step="enroll", admin=admin, now=now):
@@ -514,6 +525,7 @@ def change_password(db: Session, *, session: AdminSession, admin: AdminUser, cur
     (counted as a login failure). Raises `InvalidInput` for a weak new password, `RateLimited` never
     (the caller checks `change_password_limited` first)."""
     now = _now(now)
+    admin = _attached(db, admin)
     if not verify_password(admin.password_hash, current_password):
         _fail(db, username=admin.username, ip=ip, step="password_change", admin=admin, now=now)
         return False

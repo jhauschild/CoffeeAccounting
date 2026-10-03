@@ -177,7 +177,7 @@ def qr_svg(url: str, label: str | None, *, caption: str | None = None, standalon
     out = [
         f'<svg{ns} viewBox="0 0 {width} {height}" role="img" aria-label="{escape(name)} QR code" '
         f'class="qr-svg" shape-rendering="crispEdges">',
-        f"<title>{escape(name)}: {escape(url)}</title>",
+        f"<title>{escape(name + ': ' + url) if label else escape(name)}</title>",
         f'<rect width="{width}" height="{height}" fill="#fff"/>',
     ]
     if label:
