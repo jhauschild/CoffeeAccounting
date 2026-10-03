@@ -86,7 +86,7 @@ def test_access_code_never_leaks(client, db, caplog, global_admin):
     pages.append(client.get("/admin/qr").text)
     assert all(ACCESS_CODE not in p for p in pages)
     with read_session() as r:
-        dump = repr([(a.action, a.metadata_) for a in r.scalars(select(AuditLog))])
+        dump = repr([(a.action, a.meta) for a in r.scalars(select(AuditLog))])
         dump += repr([(e.bucket, e.key) for e in r.scalars(select(RateLimitEvent))])
     assert ACCESS_CODE not in dump and "wrong-code-123" not in dump
     assert ACCESS_CODE not in caplog.text and "wrong-code-123" not in caplog.text
