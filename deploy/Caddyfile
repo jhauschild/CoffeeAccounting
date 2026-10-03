@@ -1,0 +1,44 @@
+# Caddy 2 reverse proxy for the coffee ledger (automatic HTTPS via Let's Encrypt).
+# Replace coffee.example.org with the host in PUBLIC_BASE_URL. The app listens on 127.0.0.1:8000
+# (docker-compose.yml publishes it on the loopback interface only).
+#
+# .env must contain:  PUBLIC_BASE_URL=https://coffee.example.org
+#                     TRUSTED_PROXY_IPS=<address the proxy connects from, see README "Reverse proxy">
+coffee.example.org {
+	encode zstd gzip
+
+	# Scan, registration and admin forms are tiny; the app enforces 64 KiB as well.
+	request_body {
+		max_size 64KB
+	}
+
+	# --- Optional: restrict /admin to department / VPN addresses (recommended). Uncomment and edit. ---
+	# @admin_outside {
+	# 	path /admin /admin/*
+	# 	not remote_ip 192.0.2.0/24 2001:db8::/32
+	# }
+	# respond @admin_outside "Forbidden" 403
+
+	header {
+		>Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Never cache dynamic pages (the app sends no-store as well); static files keep the app's headers.
+	@dynamic not path /static/*
+	header @dynamic >Cache-Control "no-store"
+
+	reverse_proxy 127.0.0.1:8000 {
+		# Host is forwarded unchanged (the app compares it with the Origin header of form posts).
+		# Overwrite, never append, so clients cannot inject X-Forwarded-For.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		health_uri /healthz
+		health_interval 30s
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
