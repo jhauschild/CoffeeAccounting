@@ -130,17 +130,21 @@ def join_page(request: Request, db: Session = Depends(deps.get_read_db)):
 
 @router.post("/join")
 def join_submit(request: Request, code: str = Form("")):
-    ip = deps.client_ip(request)
+    ip = ratelimit.ip_key(deps.client_ip(request))
     bucket, limit, window = ratelimit.ACCESS_CODE_FAILURES
-    with read_session() as db:
+    # Check and count in ONE write transaction: the guess is counted as a failure before it is
+    # evaluated, so parallel guesses cannot exceed the budget; a correct code releases it again.
+    with write_session() as db:
         if ratelimit.is_limited(db, bucket, ip, limit, window):
             raise RateLimited("too many access code attempts")
+        hit_id = ratelimit.record_hit(db, bucket, ip)
     if gate.check_access_code(code):
+        with write_session() as db:
+            ratelimit.release_hits(db, [hit_id])
         response = _redirect("/join")
         deps.set_gate_cookie(response)
         return response
-    with write_session() as db:  # committed before the error page is built
-        ratelimit.record_hit(db, bucket, ip)
+    with read_session() as db:
         notice = user_views.pending_notice(request, db)
     return render(request, "user/join.html", {"gate_passed": False, "error": True, "pending_notice": notice},
                   status_code=403)
@@ -246,7 +250,7 @@ def register_submit(request: Request, display_name: str = Form(""), chair_id: st
             duplicates = users.find_same_name(db, display_name=name, chair_id=cid)
             if duplicates:
                 return _register_page(request, db, token=token, values=values, duplicates=duplicates)
-    ip = deps.client_ip(request)
+    ip = ratelimit.ip_key(deps.client_ip(request))
     try:
         with write_session() as db:
             bucket, limit, window = ratelimit.REGISTRATION
@@ -266,7 +270,7 @@ def profiles_page(request: Request, q: str = ""):
     q = q.strip()[:SEARCH_MAX_LENGTH]
     bucket, limit, window = ratelimit.PROFILE_SEARCH
     with write_session() as db:
-        ratelimit.check_rate(db, bucket, deps.client_ip(request), limit, window)
+        ratelimit.check_rate(db, bucket, ratelimit.ip_key(deps.client_ip(request)), limit, window)
         found = users.search_profiles(db, q, limit=PROFILE_LIST_LIMIT + 1)
         notice = user_views.pending_notice(request, db)
     return render(request, "user/profiles.html", {

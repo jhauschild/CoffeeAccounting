@@ -101,8 +101,6 @@ def test_access_code_failures_limited_and_not_reset_by_success(app, db):
     assert r.status_code == 429 and gate.GATE_COOKIE not in r.headers.get("set-cookie", "")
 
 
-@pytest.mark.xfail(strict=True, reason="FINDING: access-code limiter is check-then-act across two transactions "
-                                        "(routes_user.join_submit); parallel guesses all pass the check")
 def test_access_code_limiter_is_atomic_under_concurrency(app, db, monkeypatch):
     bucket, limit, window = ratelimit.ACCESS_CODE_FAILURES
     with __import__("app.db", fromlist=["write_session"]).write_session() as w:
@@ -127,8 +125,6 @@ def test_access_code_limiter_is_atomic_under_concurrency(app, db, monkeypatch):
     assert len(evaluated) <= 1, f"{len(evaluated)} guesses evaluated with only 1 left in the budget"
 
 
-@pytest.mark.xfail(strict=True, reason="FINDING: rate-limit key is the full client IP; one IPv6 /64 holds 2^64 "
-                                        "addresses, so access-code guessing is effectively unlimited")
 def test_access_code_limit_covers_an_ipv6_prefix(app, db):
     for i in range(ratelimit.ACCESS_CODE_FAILURES[1]):
         _anon(app, f"2001:db8:1:2::{i + 1:x}").post("/join", data={"code": "nope-nope"})
@@ -254,3 +250,11 @@ def test_cookies_hardened_in_production(monkeypatch, db):
         assert {"httponly", "secure", "samesite=lax"} <= attrs, h
         if h.startswith(("coffee_admin=", "coffee_admin_login=")):
             assert "path=/admin" in attrs, h
+
+
+def test_ip_key_groups_ipv6_by_64_and_leaves_ipv4_alone():
+    assert ratelimit.ip_key("203.0.113.7") == "203.0.113.7"
+    assert ratelimit.ip_key("2001:db8:1:2::1") == ratelimit.ip_key("2001:db8:1:2:ffff:eeee:dddd:cccc") == "2001:db8:1:2::/64"
+    assert ratelimit.ip_key("2001:db8:1:3::1") != ratelimit.ip_key("2001:db8:1:2::1")
+    assert ratelimit.ip_key("::ffff:203.0.113.7") == "203.0.113.7"
+    assert ratelimit.ip_key("unknown") == "unknown"

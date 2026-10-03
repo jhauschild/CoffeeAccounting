@@ -14,9 +14,10 @@ insert are atomic (`BEGIN IMMEDIATE` serializes writers).
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.models import RateLimitEvent
@@ -43,6 +44,21 @@ def _key(key: str) -> str:
     if len(key) > MAX_KEY_LENGTH:
         return "sha256:" + hashlib.sha256(key.encode("utf-8")).hexdigest()
     return key
+
+
+def ip_key(ip: str) -> str:
+    """Rate-limit key for a client address: an IPv6 client is keyed by its /64 (one subscriber
+    typically holds a whole /64, so per-address keys would make every limit trivially bypassable);
+    IPv4 and anything unparsable are returned unchanged."""
+    try:
+        addr = ipaddress.ip_address((ip or "").split("%", 1)[0])
+    except ValueError:
+        return ip
+    if addr.version == 6:
+        if addr.ipv4_mapped is not None:
+            return str(addr.ipv4_mapped)
+        return str(ipaddress.ip_network((addr, 64), strict=False))
+    return ip
 
 
 def _bucket(bucket: str) -> str:
@@ -72,6 +88,12 @@ def record_hit(db: Session, bucket: str, key: str, now: datetime | None = None) 
     db.add(event)
     db.flush()
     return event.id
+
+
+def release_hits(db: Session, ids: list[int]) -> None:
+    """Remove hits recorded earlier (an attempt that counted up front turned out to be a success)."""
+    if ids:
+        db.execute(delete(RateLimitEvent).where(RateLimitEvent.id.in_(ids)))
 
 
 def check_rate(db: Session, bucket: str, key: str, limit: int, window_seconds: int,

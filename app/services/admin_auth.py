@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import write_session
-from app.models import ADMIN_ROLES, AdminChair, AdminSession, AdminUser, Chair, RateLimitEvent
+from app.models import ADMIN_ROLES, AdminChair, AdminSession, AdminUser, Chair
 from app.services import audit, ratelimit, signing
 from app.services.errors import Conflict, InvalidInput, NotFound
 from app.timeutil import ensure_utc, utcnow
@@ -404,7 +404,7 @@ def _limit_checks(username: str, ip: str):
     """(bucket, key, limit, window) for every cap a login attempt counts against."""
     user_bucket, user_limit, window = ratelimit.ADMIN_LOGIN_FAILURES
     ip_bucket, ip_limit, ip_window = ratelimit.ADMIN_LOGIN_FAILURES_IP
-    return ((user_bucket, _limit_key(username, ip), user_limit, window), (ip_bucket, ip, ip_limit, ip_window))
+    return ((user_bucket, _limit_key(username, ratelimit.ip_key(ip)), user_limit, window), (ip_bucket, ratelimit.ip_key(ip), ip_limit, ip_window))
 
 
 def _fail(db: Session, *, username: str, ip: str, step: str, admin: AdminUser | None, now: datetime,
@@ -487,7 +487,7 @@ def start_login(*, username: str, password: str, ip: str, old_raw_token: str | N
             outcome = _fail(db, username=username, ip=ip, step="password", admin=admin, now=now, record_hits=False)
             db.expunge_all()
             return outcome
-        db.execute(delete(RateLimitEvent).where(RateLimitEvent.id.in_(hit_ids)))
+        ratelimit.release_hits(db, hit_ids)
         old = resolve_session(db, old_raw_token, now) if old_raw_token else None
         old_id = old[0].id if old else None
         if admin.totp_enabled:
