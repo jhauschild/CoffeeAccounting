@@ -14,6 +14,8 @@ services:
     environment:
       # The database always lives in the named volume, whatever .env says.
       DATABASE_URL: sqlite:////data/coffee.db
+      # scripts/backup.sh writes here (the bind mount below).
+      BACKUP_DIR: /backups
     ports:
       # Only the local reverse proxy may reach the app; never publish 8000 on a public interface.
       - "127.0.0.1:8000:8000"

@@ -138,3 +138,41 @@ def test_restore_rejects_bad_backups_and_missing_confirmation(db, tmp_path):
         assert done.returncode == 1 and "failed verification" in done.stderr, bad
     assert _prices(db) == 1
     assert _run(["bash", str(SCRIPTS / "restore.sh"), str(garbage)], _env(db)).returncode == 2
+
+
+def test_readme_cli_examples_match_the_real_parser():
+    import re
+
+    from app.cli import build_parser
+
+    parser = build_parser()
+    readme = (ROOT / "README.md").read_text()
+    commands = re.findall(r"python -m app\.cli ([a-z-]+[^\n`]*)", readme)
+    assert len(commands) >= 10
+    seen = set()
+    for line in commands:
+        line = line.split("#")[0].strip()
+        line = re.sub(r"\s+\(.*$", "", line)  # prose in parentheses after an example
+        argv = [a for a in line.split() if a not in ("...",)]
+        argv = [a.strip("[]") if a.startswith("[") else a for a in argv]
+        if "SHORT" in " ".join(argv) or "U" in argv:
+            argv = [{"SHORT": "x", "U": "u"}.get(a, a) for a in argv]
+        argv = [a for a in argv if not a.endswith("]") or not a.startswith("[")]
+        args = parser.parse_args(argv)  # raises SystemExit on an unknown command or flag
+        seen.add(args.command)
+    assert {"create-admin", "set-price", "check-ledger", "purge-expired", "qr", "list-admins"} <= seen
+    for name in ("reset-admin-password", "reset-admin-totp", "disable-admin", "set-admin-chairs", "bootstrap-admin"):
+        assert name in readme
+
+
+def test_readme_documents_every_environment_variable_and_the_required_sentence():
+    from app.config import Settings
+
+    readme = (ROOT / "README.md").read_text()
+    env_example = (ROOT / ".env.example").read_text()
+    for field in Settings.model_fields:
+        assert f"`{field.upper()}`" in readme, field
+        assert field.upper() in env_example, field
+    assert ("Normal-user identity is based on a long-lived browser session and voluntary profile selection. "
+            "It does not cryptographically prove the user's real-world identity. This is intentional for a "
+            "low-stakes, trust-based departmental coffee ledger.") in readme
