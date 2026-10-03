@@ -77,6 +77,11 @@
       "status": "done",
       "attempts": 1,
       "last_commit": "230068e"
+    },
+    "fixer-2": {
+      "status": "done",
+      "attempts": 1,
+      "last_commit": "ced9fae"
     }
   }
 }
