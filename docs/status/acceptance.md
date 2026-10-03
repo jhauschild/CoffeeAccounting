@@ -1,7 +1,7 @@
 # acceptance status
 ## Done
-- full pytest (774 passed), e2e passed; README local-dev steps run in a temp copy (/tmp/claude-0/accHoPM), admin created, TOTP enrolled, chairs, price, scan/undo/price-change flows.
+- All DoD items run and recorded in docs/ACCEPTANCE.md (9 verified, item 1 split: Docker part not verified).
 ## Next
-- payments/balances, chair-admin visibility, CSV, QR, smoke.sh, backup/restore, production-config refusal, alembic check, check-ledger, pip-audit, README commands, write docs/ACCEPTANCE.md
-## Notes
-- Docker daemon unavailable (docker CLI only).
+- nothing
+## Notes/Blockers
+- No Docker daemon, no Caddy/nginx: docker build/up and proxy examples not verified.
