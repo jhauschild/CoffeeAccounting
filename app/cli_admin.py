@@ -12,7 +12,6 @@ import getpass
 import sys
 
 from app.db import read_session, write_session
-from app.models import AdminUser
 from app.services import admin_auth, exports
 from app.services.chairs import get_chair_by_short_name
 from app.services.errors import InvalidInput, NotFound, ServiceError

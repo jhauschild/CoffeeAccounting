@@ -6,17 +6,19 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Form, Query, Request
+from starlette.responses import Response
 from sqlalchemy import func, select
 
 from app.db import read_session, write_session
-from app.models import AdminUser, Chair, ConsumptionEvent, Price, User
+from app.models import AdminUser, ConsumptionEvent, User
 from app.money import parse_money
 from app.services import chairs as chair_service
 from app.services import exports, prices, stats
-from app.services.errors import InvalidAmount, InvalidInput, NotFound, ServiceError
+from app.services.errors import InvalidInput, NotFound, ServiceError
 from app.timeutil import parse_iso_datetime
 from app.web import admin_deps as ad
 from app.web.deps import client_ip, parse_uuid
+from app.web.middleware import no_store
 
 router = APIRouter()
 
@@ -129,6 +131,17 @@ def qr_page(request: Request, ctx: ad.AdminContext = Depends(ad.require_admin)):
 def qr_preview(request: Request, line: str = Form("", max_length=200), ctx: ad.AdminContext = Depends(ad.require_admin)):
     """Echo the optional free-text line (e.g. an access code) into the printable page. Never stored or logged."""
     return _qr_page(request, ctx, " ".join(line.split()))
+
+
+@router.get("/qr/{kind}.svg")
+def qr_download(kind: str, ctx: ad.AdminContext = Depends(ad.require_admin)):
+    """The labeled standalone SVG of one code (same file as `python -m app.cli qr`)."""
+    urls = exports.qr_urls()
+    if kind not in urls:
+        raise NotFound("unknown code")
+    svg = exports.qr_svg(urls[kind], ad.t(f"admin.qr.label_{kind}"))
+    return no_store(Response(svg, media_type="image/svg+xml",
+                             headers={"Content-Disposition": f'attachment; filename="coffee-{kind}.svg"'}))
 
 
 # ----- audit view -------------------------------------------------------------------------------

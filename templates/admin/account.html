@@ -16,6 +16,11 @@
     <p class="muted">{{ t("admin.account.password_note") }}</p>
   </form>
 </section>
+{% if not admin.totp_enabled %}
+<section class="card notice notice-warn">
+  <p>{{ t("admin.account.no_totp") }} <a href="/admin/totp/setup">{{ t("admin.account.setup_totp") }}</a></p>
+</section>
+{% endif %}
 <section class="card">
   <h2>{{ t("admin.account.sessions") }}</h2>
   <div class="table-wrap"><table class="table-cards">

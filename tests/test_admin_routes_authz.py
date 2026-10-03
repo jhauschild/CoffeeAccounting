@@ -96,7 +96,7 @@ def world(db, chair, other_chair, price):
     event = factories.add_events(db, user, "single")[0]
     factories.make_payment(db, user, factories.make_admin(db, "global"), 100)
     ids = {"user_id": user.id, "user2_id": user2.id, "event_id": event.id, "chair_id": chair.id,
-           "other_chair_id": other_chair.id, "other_user_id": other_user.id}
+           "other_chair_id": other_chair.id, "other_user_id": other_user.id, "kind": "single"}
     return ids
 
 

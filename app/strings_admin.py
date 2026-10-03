@@ -87,6 +87,8 @@ STRINGS: dict[str, str] = {
     "admin.account.session_seen": "Last seen",
     "admin.account.session_expires": "Expires",
     "admin.account.this_session": "this session",
+    "admin.account.no_totp": "Two-factor authentication is not set up for your account.",
+    "admin.account.setup_totp": "Set it up now",
     "admin.account.revoke_others": "Sign out all other sessions",
 
     # ----- dashboard -----
@@ -200,6 +202,7 @@ STRINGS: dict[str, str] = {
     "admin.qr.line": "Extra line for the printout (optional)",
     "admin.qr.line_hint": "For example the access code. It is printed but never stored.",
     "admin.qr.update": "Update preview",
+    "admin.qr.download": "Download {label} (SVG)",
     "admin.qr.print": "Print",
     "admin.audit.title": "Audit log",
     "admin.audit.filter": "Action starts with",

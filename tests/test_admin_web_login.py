@@ -227,3 +227,16 @@ def test_bootstrap_on_app_start(monkeypatch):
         pass
     with read_session() as r:
         assert [a.username for a in admin_auth.list_admins(r)] == ["first"]
+
+
+def test_totp_not_required_login_goes_straight_to_dashboard(client, monkeypatch):
+    from tests.conftest import reload_settings
+    monkeypatch.setenv("ADMIN_TOTP_REQUIRED", "false")
+    reload_settings()
+    make_real_admin(totp=False)
+    r = post_login(client)
+    assert r.status_code == 303 and r.headers["location"] == "/admin"
+    client.cookies.set("coffee_admin", admin_cookie(r).split(";")[0].split("=", 1)[1], path="/admin")
+    page = client.get("/admin/account")
+    assert page.status_code == 200 and "/admin/totp/setup" in page.text  # optional enrollment is offered
+    assert client.get("/admin/totp/setup").status_code == 200

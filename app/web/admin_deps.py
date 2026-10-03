@@ -33,7 +33,7 @@ from app.services.errors import Forbidden, NotFound, ServiceError
 from app.strings import has, t
 from app.timeutil import format_local
 from app.web import templating, tokens
-from app.web.deps import CSRFError, Redirect, parse_uuid, verify_csrf_form
+from app.web.deps import Redirect, parse_uuid, verify_csrf_form
 
 log = logging.getLogger(__name__)
 

@@ -196,3 +196,13 @@ def test_every_referenced_admin_string_exists():
         flash |= set(re.findall(r"""\b(?:msg|err)="([a-z_]+)"\)""", Path(path).read_text()))
     for key in flash:
         assert f"admin.msg.{key}" in catalog or f"admin.err.{key}" in catalog, key
+
+
+def test_qr_svg_download_is_labeled_and_scoped(gc, cc, monkeypatch):
+    r = gc[0].get("/admin/qr/double.svg")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml")
+    assert "attachment" in r.headers["content-disposition"]
+    assert ">DOUBLE<" in r.text and "http://testserver/coffee/double" in r.text and "<script" not in r.text
+    assert cc[0].get("/admin/qr/single.svg").status_code == 200  # every administrator may print the codes
+    assert gc[0].get("/admin/qr/triple.svg").status_code == 404
+    assert "/admin/qr/single.svg" in gc[0].get("/admin/qr").text

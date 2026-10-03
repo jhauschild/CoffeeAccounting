@@ -11,6 +11,7 @@
       <dt>{{ t("admin.dash.price") }}</dt><dd>{% if price %}{{ price.price_per_shot_cents|money }}{% else %}–{% endif %}</dd>
     </dl>
     <p class="muted">{{ t("admin.qr.only_urls") }}</p>
+    <p>{% for c in codes %}<a class="button button-secondary" href="/admin/qr/{{ c.kind }}.svg">{{ t("admin.qr.download", label=c.label) }}</a> {% endfor %}</p>
     <form method="post" action="/admin/qr" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="field"><label for="line">{{ t("admin.qr.line") }}</label>
