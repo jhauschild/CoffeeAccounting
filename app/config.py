@@ -62,7 +62,8 @@ def _is_local_host(url: str) -> bool:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore",
+                                      hide_input_in_errors=True)
 
     environment: Literal["development", "production"] = "development"
     public_base_url: str = "http://localhost:8000"

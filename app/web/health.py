@@ -37,12 +37,12 @@ def readiness() -> tuple[bool, str]:
     return True, "ok"
 
 
-@router.get("/healthz", include_in_schema=False)
+@router.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
 def healthz() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-@router.get("/readyz", include_in_schema=False)
+@router.api_route("/readyz", methods=["GET", "HEAD"], include_in_schema=False)
 def readyz() -> JSONResponse:
     ok, reason = readiness()
     return JSONResponse({"status": "ok" if ok else "unavailable", "check": reason}, status_code=200 if ok else 503)

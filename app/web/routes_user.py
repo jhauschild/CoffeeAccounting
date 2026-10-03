@@ -48,7 +48,7 @@ def _message(request: Request, title: str, body: str, *, status: int = 200, tone
 
 
 # ----- home -----------------------------------------------------------------------------------
-@router.get("/")
+@router.api_route("/", methods=["GET", "HEAD"])
 def home(request: Request, notice: str = ""):
     ctx = deps.current_user(request)
     return render(request, "user/home.html", {"ctx": ctx, "left": notice == "left"})
