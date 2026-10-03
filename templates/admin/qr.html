@@ -1,0 +1,34 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.qr.title") }}{% endblock %}
+{% block head_extra %}{{ super() }}<script src="/static/admin/print.js" defer></script>{% endblock %}
+{% block admin_content %}
+<div class="no-print">
+  <h1>{{ t("admin.qr.title") }}</h1>
+  <section class="card">
+    <dl class="totals">
+      <dt>{{ t("admin.qr.label_single") }}</dt><dd class="wrap">{{ codes[0].url }}</dd>
+      <dt>{{ t("admin.qr.label_double") }}</dt><dd class="wrap">{{ codes[1].url }}</dd>
+      <dt>{{ t("admin.dash.price") }}</dt><dd>{% if price %}{{ price.price_per_shot_cents|money }}{% else %}–{% endif %}</dd>
+    </dl>
+    <p class="muted">{{ t("admin.qr.only_urls") }}</p>
+    <p>{% for c in codes %}<a class="button button-secondary" href="/admin/qr/{{ c.kind }}.svg">{{ t("admin.qr.download", label=c.label) }}</a> {% endfor %}</p>
+    <form method="post" action="/admin/qr" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="field"><label for="line">{{ t("admin.qr.line") }}</label>
+        <input id="line" name="line" type="text" maxlength="200" value="{{ line }}">
+        <p class="muted">{{ t("admin.qr.line_hint") }}</p></div>
+      <button type="submit" class="button-secondary">{{ t("admin.qr.update") }}</button>
+      <button type="button" data-print>{{ t("admin.qr.print") }}</button>
+    </form>
+  </section>
+</div>
+{% for c in codes %}
+<section class="qr-sheet card" aria-label="{{ c.label }}">
+  <p class="qr-label">{{ c.label }}</p>
+  <div class="qr-code">{{ c.svg|safe }}</div>
+  {% if price %}<p class="qr-price">{{ price.price_per_shot_cents|money }} {{ t("admin.dash.per_shot") }}</p>{% endif %}
+  <p class="qr-url">{{ c.url }}</p>
+  {% if line %}<p class="qr-line">{{ line }}</p>{% endif %}
+</section>
+{% endfor %}
+{% endblock %}

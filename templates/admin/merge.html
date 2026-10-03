@@ -1,0 +1,28 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.merge.title") }}{% endblock %}
+{% block admin_content %}
+{% set u = detail.user %}
+<p><a href="/admin/users/{{ u.id }}">&larr; {{ u.display_name }}</a></p>
+<h1>{{ t("admin.merge.title") }}</h1>
+<p class="notice notice-warn card">{{ t("admin.merge.warning", name=u.display_name, chair=u.chair.short_name) }}</p>
+<section class="card">
+  <form method="get" action="/admin/users/{{ u.id }}/merge" class="filters">
+    <div class="field"><label for="q">{{ t("admin.merge.search") }}</label>
+      <input id="q" name="q" type="search" value="{{ q }}" maxlength="80" required></div>
+    <div class="field actions"><button type="submit">{{ t("admin.users.apply") }}</button></div>
+  </form>
+</section>
+{% if q %}
+<section class="card">
+  <h2>{{ t("admin.merge.candidates") }}</h2>
+  {% for c in candidates %}
+  <form method="post" action="/admin/users/{{ u.id }}/merge" class="candidate">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="target_id" value="{{ c.id }}">
+    <span>{{ c.display_name }} ({{ c.chair.short_name }}) <span class="muted">{{ t("admin.status." ~ c.status) }}</span></span>
+    <button type="submit" class="button-danger">{{ t("admin.merge.submit", name=c.display_name) }}</button>
+  </form>
+  {% else %}<p class="muted">{{ t("admin.none") }}</p>{% endfor %}
+</section>
+{% endif %}
+{% endblock %}

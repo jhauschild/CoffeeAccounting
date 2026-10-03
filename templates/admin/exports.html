@@ -1,0 +1,21 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.exports.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.exports.title") }}</h1>
+<section class="card">
+  <h2>{{ t("admin.exports.ledger") }}</h2>
+  <p class="muted">{{ t("admin.exports.ledger_hint") }}</p>
+  <form method="get" action="/admin/exports/ledger.csv" class="filters">
+    <div class="field"><label for="from">{{ t("admin.exports.from") }}</label><input id="from" name="from" type="date"></div>
+    <div class="field"><label for="to">{{ t("admin.exports.to") }}</label><input id="to" name="to" type="date"></div>
+    <div class="field"><label for="chair">{{ t("admin.csv.chair") }}</label>
+      <select id="chair" name="chair"><option value="">{{ t("admin.users.all_chairs") }}</option>
+      {% for c in chairs %}<option value="{{ c.id }}">{{ c.short_name }}</option>{% endfor %}</select></div>
+    <div class="field actions"><button type="submit">{{ t("admin.exports.download") }}</button></div>
+  </form>
+</section>
+<section class="card">
+  <h2>{{ t("admin.exports.users") }}</h2>
+  <p>{{ t("admin.exports.users_hint") }} <a href="/admin/users">{{ t("admin.nav.users") }}</a></p>
+</section>
+{% endblock %}

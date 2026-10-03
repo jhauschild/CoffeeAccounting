@@ -1,0 +1,38 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.prices.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.prices.title") }}</h1>
+<section class="card">
+  <h2>{{ t("admin.prices.current") }}</h2>
+  {% if current %}<p class="big">{{ current.price_per_shot_cents|money }} <span class="muted">{{ t("admin.dash.per_shot") }}</span></p>
+  {% else %}<p class="notice notice-warn card">{{ t("admin.dash.no_price") }}</p>{% endif %}
+  <p class="muted">{{ t("admin.prices.only_future") }}</p>
+</section>
+<section class="card">
+  <h2>{{ t("admin.prices.add") }}</h2>
+  <form method="post" action="/admin/prices" class="filters">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="field"><label for="price">{{ t("admin.prices.new_price", currency=settings.currency_symbol) }}</label>
+      <input id="price" name="price" type="text" inputmode="decimal" maxlength="20" placeholder="0.50" required></div>
+    <div class="field"><label for="effective_from">{{ t("admin.prices.effective_from") }}</label>
+      <input id="effective_from" name="effective_from" type="datetime-local">
+      <p class="muted">{{ t("admin.prices.effective_hint", tz=settings.local_timezone) }}</p></div>
+    <div class="field"><label for="note">{{ t("admin.csv.note") }}</label><input id="note" name="note" type="text" maxlength="500"></div>
+    <div class="field actions"><button type="submit">{{ t("admin.prices.add_submit") }}</button></div>
+  </form>
+</section>
+<section class="card">
+  <h2>{{ t("admin.prices.history") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.prices.effective_from") }}</th><th class="num">{{ t("admin.prices.price") }}</th><th>{{ t("admin.prices.set_by") }}</th><th>{{ t("admin.prices.entered") }}</th><th>{{ t("admin.csv.note") }}</th></tr></thead>
+    <tbody>
+    {% for p in history %}<tr>
+      <td data-label="{{ t('admin.prices.effective_from') }}">{{ p.effective_from|local }}</td>
+      <td class="num" data-label="{{ t('admin.prices.price') }}">{{ p.price_per_shot_cents|money }}</td>
+      <td data-label="{{ t('admin.prices.set_by') }}">{{ names.get(p.created_by_admin_id, t("admin.prices.system")) }}</td>
+      <td data-label="{{ t('admin.prices.entered') }}">{{ p.created_at|local }}</td>
+      <td data-label="{{ t('admin.csv.note') }}">{{ p.note or "" }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endblock %}
