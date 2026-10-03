@@ -52,6 +52,10 @@ TEST_ENV = {
     "CSV_DELIMITER": ";",
     "CSV_DECIMAL_SEPARATOR": ",",
     "TRUSTED_PROXY_IPS": "",
+    # Cheap Argon2 parameters for the test suite only (production defaults live in app/config.py).
+    "ARGON2_TIME_COST": "1",
+    "ARGON2_MEMORY_COST_KIB": "8",
+    "ARGON2_PARALLELISM": "1",
 }
 
 

@@ -2,8 +2,11 @@
 
 All variables from PROMPT §11 are supported. In production (`ENVIRONMENT=production`)
 startup refuses insecure configuration (PROMPT §9): a non-https `PUBLIC_BASE_URL`,
-a missing/short/placeholder `SECRET_KEY`, or a missing/short/placeholder `ACCESS_CODE`. Development mode refuses the published
-`DEV_SECRET_KEY`/`DEV_ACCESS_CODE` unless `PUBLIC_BASE_URL` is a local http:// address.
+a missing/short/placeholder `SECRET_KEY`, a mail backend other than `smtp`, bad SMTP settings or a
+missing `MAIL_FROM`. `ACCESS_CODE` (the v1 gate code, removed in task 2.5) is optional: in production an
+unset/short/placeholder code is replaced by a random one so the v1 gate cannot be opened with a
+published value. Development mode refuses the published `DEV_SECRET_KEY` unless `PUBLIC_BASE_URL` is a
+local http:// address. Error messages never echo configuration values.
 
 `get_settings()` is cached; tests that change the environment call
 `get_settings.cache_clear()`.
@@ -14,9 +17,11 @@ from __future__ import annotations
 import ipaddress
 from urllib.parse import urlsplit
 from functools import lru_cache
+import secrets
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from argon2 import DEFAULT_MEMORY_COST, DEFAULT_PARALLELISM, DEFAULT_TIME_COST
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -99,6 +104,35 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # ----- v2: mail ---------------------------------------------------------------
+    # None = default by environment (console in development, smtp in production); resolved in `_validate`.
+    # The SMTP login is NOT a setting: it lives in the encrypted store under SECRETS_DIR (`setup-mail`).
+    mail_backend: Literal["smtp", "console", "memory", "file"] | None = None
+    smtp_host: str = "postout.lrz.de"
+    smtp_port: int = 587
+    smtp_security: Literal["starttls", "ssl"] = "starttls"
+    mail_from: str = ""
+    mail_file_dir: str = ""
+    secrets_dir: str = "/secrets"
+    mail_max_per_hour: int = 30
+
+    # ----- v2: accounts -----------------------------------------------------------
+    # Comma-separated; "tum.de" matches exactly, "*.tum.de" matches subdomains only.
+    allowed_email_domains: str = "tum.de,mytum.de,*.tum.de"
+    verification_ttl_hours: int = 24
+    guest_approval_ttl_days: int = 7
+    reset_ttl_minutes: int = 60
+    password_min_length: int = 10
+    stepup_window_seconds: int = 300
+    # None = default by environment (true in production, false otherwise); resolved in `_validate`.
+    balance_totp_required: bool | None = None
+
+    # Argon2id cost. Defaults are the argon2-cffi (RFC 9106 low-memory) values and must not be
+    # lowered in production; tests set cheap values in tests/conftest.py only.
+    argon2_time_cost: int = DEFAULT_TIME_COST
+    argon2_memory_cost_kib: int = DEFAULT_MEMORY_COST
+    argon2_parallelism: int = DEFAULT_PARALLELISM
+
     # ----- derived values -------------------------------------------------
     @property
     def is_production(self) -> bool:
@@ -122,6 +156,10 @@ class Settings(BaseSettings):
     def trusted_proxies(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
         items = [p.strip() for p in self.trusted_proxy_ips.split(",") if p.strip()]
         return [ipaddress.ip_network(p, strict=False) for p in items]
+
+    @property
+    def allowed_email_domain_list(self) -> list[str]:
+        return [d.strip().lower() for d in self.allowed_email_domains.split(",") if d.strip()]
 
     @property
     def cookie_secure(self) -> bool:
@@ -157,13 +195,14 @@ class Settings(BaseSettings):
                 errors.append(f"{name.upper()} must be at least 1")
         if self.undo_window_seconds < 0:
             errors.append("UNDO_WINDOW_SECONDS must not be negative")
+        errors.extend(self._validate_v2())
 
-        if not self.is_production and (self.secret_key == DEV_SECRET_KEY or self.access_code == DEV_ACCESS_CODE):
+        if not self.is_production and self.secret_key == DEV_SECRET_KEY:
             if self.public_base_url.startswith("https://") or not _is_local_host(self.public_base_url):
                 errors.append(
-                    "development mode with the published DEV_SECRET_KEY / DEV_ACCESS_CODE is only allowed for a local "
+                    "development mode with the published DEV_SECRET_KEY is only allowed for a local "
                     "http:// PUBLIC_BASE_URL (localhost); this looks like a public deployment, so set "
-                    "ENVIRONMENT=production together with a random SECRET_KEY and ACCESS_CODE"
+                    "ENVIRONMENT=production together with a random SECRET_KEY"
                 )
         if self.is_production:
             if not self.public_base_url.startswith("https://"):
@@ -172,13 +211,59 @@ class Settings(BaseSettings):
                 errors.append(
                     f"SECRET_KEY must be set to a random value of at least {MIN_SECRET_KEY_LENGTH} characters in production"
                 )
+            # ACCESS_CODE is optional (v1 gate, removed in task 2.5). A weak or unset code must not
+            # open the gate with a published value, so replace it by an unguessable one.
             if len(self.access_code) < MIN_ACCESS_CODE_LENGTH or is_placeholder(self.access_code):
-                errors.append(
-                    f"ACCESS_CODE must be set to a non-placeholder value of at least {MIN_ACCESS_CODE_LENGTH} characters in production"
-                )
+                self.access_code = secrets.token_urlsafe(32)
         if errors:
             raise ValueError("Invalid configuration: " + "; ".join(errors))
         return self
+
+
+    def _validate_v2(self) -> list[str]:
+        """Mail, account and Argon2 settings. Messages name the variable, never its value."""
+        errors: list[str] = []
+        # Resolved defaults, so callers always see concrete values.
+        if self.mail_backend is None:
+            self.mail_backend = "smtp" if self.is_production else "console"
+        if self.balance_totp_required is None:
+            self.balance_totp_required = self.is_production
+
+        if not 1 <= self.smtp_port <= 65535:
+            errors.append("SMTP_PORT must be between 1 and 65535")
+        if self.mail_backend == "file" and not self.mail_file_dir.strip():
+            errors.append("MAIL_FILE_DIR must be set when MAIL_BACKEND=file")
+        if not self.secrets_dir.strip():
+            errors.append("SECRETS_DIR must not be empty")
+        if not self.allowed_email_domain_list:
+            errors.append("ALLOWED_EMAIL_DOMAINS must list at least one domain")
+        for d in self.allowed_email_domain_list:
+            host = d[2:] if d.startswith("*.") else d
+            if "." not in host or "@" in host or "*" in host or any(c.isspace() for c in host):
+                errors.append("ALLOWED_EMAIL_DOMAINS entries must be domains such as tum.de or *.tum.de")
+                break
+        for name in ("mail_max_per_hour", "verification_ttl_hours", "guest_approval_ttl_days", "reset_ttl_minutes",
+                     "stepup_window_seconds", "argon2_time_cost", "argon2_parallelism"):
+            if getattr(self, name) < 1:
+                errors.append(f"{name.upper()} must be at least 1")
+        if self.argon2_memory_cost_kib < 8 * max(self.argon2_parallelism, 1):
+            errors.append("ARGON2_MEMORY_COST_KIB must be at least 8 per lane (ARGON2_PARALLELISM)")
+        if not 1 <= self.password_min_length <= 128:
+            errors.append("PASSWORD_MIN_LENGTH must be between 1 and 128")
+
+        if self.is_production:
+            if self.mail_backend != "smtp":
+                errors.append("MAIL_BACKEND must be smtp in production")
+            if not self.smtp_host.strip():
+                errors.append("SMTP_HOST must be set in production")
+            if (self.smtp_security, self.smtp_port) in (("ssl", 587), ("starttls", 465)):
+                errors.append("SMTP_SECURITY and SMTP_PORT do not match (ssl uses 465, starttls uses 587)")
+            mail_from = self.mail_from.strip()
+            if not mail_from or "@" not in mail_from:
+                errors.append("MAIL_FROM must be set to a sender address in production")
+            if self.password_min_length < 8:
+                errors.append("PASSWORD_MIN_LENGTH must be at least 8 in production")
+        return errors
 
 
 @lru_cache

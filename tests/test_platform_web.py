@@ -28,6 +28,7 @@ PROD_ENV = {
     "PUBLIC_BASE_URL": "https://coffee.example.org",
     "SECRET_KEY": "Zq8v3mL1x9Rk2pT7wY4bN6cF0hJ5sD8gQ1aE3uI7oP",
     "ACCESS_CODE": "Kaffee-2026-Lab",
+    "MAIL_FROM": "coffee@example.org",
 }
 
 
@@ -111,9 +112,8 @@ def test_production_hsts_and_no_docs(monkeypatch):
     {"SECRET_KEY": ""},
     {"SECRET_KEY": "short"},
     {"SECRET_KEY": "change-me-change-me-change-me-change-me"},
-    {"ACCESS_CODE": ""},
-    {"ACCESS_CODE": "1234567"},
-    {"ACCESS_CODE": "changeme"},
+    {"MAIL_FROM": ""},
+    {"MAIL_BACKEND": "console"},
 ])
 def test_production_startup_refuses_insecure_config(monkeypatch, env):
     for k, v in {**PROD_ENV, **env}.items():

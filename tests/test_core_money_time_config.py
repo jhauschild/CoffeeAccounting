@@ -98,6 +98,7 @@ GOOD_PROD = dict(
     public_base_url="https://coffee.example.org/",
     secret_key="Zq3v8K1mR7tXw2pL9sD4fG6hJ0kN5bVc",
     access_code="Bean-Water-42",
+    mail_from="Coffee Ledger <coffee@example.org>",
 )
 
 
@@ -115,10 +116,6 @@ def test_production_settings_valid():
         dict(secret_key="short"),
         dict(secret_key="change-me-change-me-change-me-change-me"),
         dict(secret_key="dev-insecure-secret-key-not-for-production-use"),
-        dict(access_code=""),
-        dict(access_code="1234567"),
-        dict(access_code="changeme"),
-        dict(access_code="dev-access-code"),
     ],
 )
 def test_production_settings_refuse_insecure_values(override):

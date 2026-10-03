@@ -43,6 +43,13 @@ class InvalidAmount(InvalidInput):
     code = "invalid_amount"
 
 
+class InvalidPassword(InvalidInput):
+    """Password policy violation. `context["reason"]` is one of too_short, too_long, equals_username,
+    equals_email_local; the message never contains the password."""
+
+    code = "invalid_password"
+
+
 class Conflict(ServiceError):
     code = "conflict"
 

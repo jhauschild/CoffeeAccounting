@@ -168,7 +168,7 @@ Set in `.env` (see `.env.example`, which documents each one). Defaults are the a
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | public address; content of the QR codes; https in production |
 | `DATABASE_URL` | `sqlite:///./data/coffee.db` | SQLite only; Compose forces `sqlite:////data/coffee.db` |
 | `SECRET_KEY` | dev value | signs tokens and cookies; random, >= 32 characters in production |
-| `ACCESS_CODE` | dev value | department access code, >= 8 characters in production |
+| `ACCESS_CODE` | dev value | v1 department access code; optional in production (removed in a later v2 task) |
 | `TRUSTED_PROXY_IPS` | empty | IPs/CIDRs whose `X-Forwarded-*` are trusted |
 | `SESSION_LIFETIME_DAYS` | `180` | user browser session lifetime |
 | `ADMIN_SESSION_HOURS` | `12` | admin session lifetime |
@@ -184,6 +184,20 @@ Set in `.env` (see `.env.example`, which documents each one). Defaults are the a
 | `MAX_COFFEES_PER_SESSION_PER_HOUR` | `30` | guard against accidental scan loops |
 | `CSV_DELIMITER` | `;` | CSV delimiter (German Excel) |
 | `CSV_DECIMAL_SEPARATOR` | `,` | `,` or `.` |
+| `MAIL_BACKEND` | `console` (dev), `smtp` (production) | `smtp`, `console`, `memory` or `file`; production requires `smtp` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` | `postout.lrz.de`, `587`, `starttls` | outgoing mail server; `starttls` with 587 or `ssl` with 465. The login is stored encrypted under `SECRETS_DIR`, not in `.env` |
+| `MAIL_FROM` | empty | sender address; required in production |
+| `MAIL_FILE_DIR` | empty | target directory for `MAIL_BACKEND=file` |
+| `SECRETS_DIR` | `/secrets` | directory of the encrypted mail login |
+| `MAIL_MAX_PER_HOUR` | `30` | cap on outgoing mails per hour |
+| `ALLOWED_EMAIL_DOMAINS` | `tum.de,mytum.de,*.tum.de` | email domains accepted for members |
+| `VERIFICATION_TTL_HOURS` | `24` | validity of the email verification link |
+| `GUEST_APPROVAL_TTL_DAYS` | `7` | how long a guest registration waits for its sponsor |
+| `RESET_TTL_MINUTES` | `60` | validity of a password reset link |
+| `PASSWORD_MIN_LENGTH` | `10` | minimum password length (maximum is 128) |
+| `STEPUP_WINDOW_SECONDS` | `300` | validity of an admin step-up confirmation |
+| `BALANCE_TOTP_REQUIRED` | `false` (dev), `true` (production) | require TOTP to set a balance |
+| `ARGON2_TIME_COST`, `ARGON2_MEMORY_COST_KIB`, `ARGON2_PARALLELISM` | `3`, `65536`, `4` | Argon2id cost; keep the defaults in production (tests lower them) |
 | `LOG_LEVEL` | `INFO` | stdout logging level |
 | `BACKUP_HOST_DIR` | `./backups` | Compose only: host directory mounted at `/backups` |
 
