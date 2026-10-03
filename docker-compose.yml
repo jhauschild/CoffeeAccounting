@@ -12,6 +12,8 @@ services:
     image: coffee-ledger:latest
     env_file: .env
     environment:
+      # Never fall back to the development defaults (published SECRET_KEY / ACCESS_CODE), whatever .env says.
+      ENVIRONMENT: production
       # The database always lives in the named volume, whatever .env says.
       DATABASE_URL: sqlite:////data/coffee.db
       # scripts/backup.sh writes here (the bind mount below).

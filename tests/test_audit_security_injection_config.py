@@ -180,8 +180,6 @@ def test_production_error_page_has_no_details(monkeypatch, db):
         assert c.post("/admin/users/x/payment", data={"amount": "1"}, follow_redirects=False).status_code == 303
 
 
-@pytest.mark.xfail(strict=True, reason="FINDING: ENVIRONMENT defaults to development; an https deployment that forgets "
-                                        "it silently runs with the published DEV_SECRET_KEY/DEV_ACCESS_CODE")
 def test_public_https_deployment_without_environment_fails_closed(monkeypatch):
     for key in ("ENVIRONMENT", "SECRET_KEY", "ACCESS_CODE"):
         monkeypatch.delenv(key, raising=False)
@@ -190,9 +188,6 @@ def test_public_https_deployment_without_environment_fails_closed(monkeypatch):
         assert s.secret_key == DEV_SECRET_KEY  # what happens today: forgeable gate/CSRF/scan tokens
 
 
-@pytest.mark.xfail(strict=True, reason="FINDING: engine created without hide_parameters; DB errors are logged "
-                                        "(main._transient/_unexpected) with bound parameters such as admin "
-                                        "csrf_secret, TOTP secret or token hashes")
 def test_database_errors_do_not_carry_bound_parameters_into_logs():
     assert get_engine().hide_parameters is True
 
@@ -219,3 +214,13 @@ def test_secrets_absent_from_audit_metadata(app, db, chair):
     for needle in [PASSWORD, "bad!", secret, current_code(secret), *[x for pair in sessions for x in pair]]:
         assert needle not in dump
     assert Path(ROOT / ".gitignore").read_text().count(".env") >= 1
+
+
+def test_development_defaults_only_allowed_for_local_http(monkeypatch):
+    for key in ("ENVIRONMENT", "SECRET_KEY", "ACCESS_CODE"):
+        monkeypatch.delenv(key, raising=False)
+    for ok in ("http://localhost:8000", "http://127.0.0.1:8000", "http://[::1]:8000"):
+        assert Settings(_env_file=None, public_base_url=ok).secret_key == DEV_SECRET_KEY
+    for bad in ("http://coffee.example.org", "https://localhost"):
+        with pytest.raises(ValueError, match="ENVIRONMENT=production"):
+            Settings(_env_file=None, public_base_url=bad)

@@ -2,7 +2,8 @@
 
 All variables from PROMPT §11 are supported. In production (`ENVIRONMENT=production`)
 startup refuses insecure configuration (PROMPT §9): a non-https `PUBLIC_BASE_URL`,
-a missing/short/placeholder `SECRET_KEY`, or a missing/short/placeholder `ACCESS_CODE`.
+a missing/short/placeholder `SECRET_KEY`, or a missing/short/placeholder `ACCESS_CODE`. Development mode refuses the published
+`DEV_SECRET_KEY`/`DEV_ACCESS_CODE` unless `PUBLIC_BASE_URL` is a local http:// address.
 
 `get_settings()` is cached; tests that change the environment call
 `get_settings.cache_clear()`.
@@ -11,6 +12,7 @@ a missing/short/placeholder `SECRET_KEY`, or a missing/short/placeholder `ACCESS
 from __future__ import annotations
 
 import ipaddress
+from urllib.parse import urlsplit
 from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -44,6 +46,19 @@ _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£", "CHF": "CHF"}
 def is_placeholder(value: str) -> bool:
     v = value.strip().lower()
     return v in _PLACEHOLDER_VALUES or any(m in v for m in _PLACEHOLDER_MARKERS)
+
+
+def _is_local_host(url: str) -> bool:
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class Settings(BaseSettings):
@@ -142,6 +157,13 @@ class Settings(BaseSettings):
         if self.undo_window_seconds < 0:
             errors.append("UNDO_WINDOW_SECONDS must not be negative")
 
+        if not self.is_production and (self.secret_key == DEV_SECRET_KEY or self.access_code == DEV_ACCESS_CODE):
+            if self.public_base_url.startswith("https://") or not _is_local_host(self.public_base_url):
+                errors.append(
+                    "development mode with the published DEV_SECRET_KEY / DEV_ACCESS_CODE is only allowed for a local "
+                    "http:// PUBLIC_BASE_URL (localhost); this looks like a public deployment, so set "
+                    "ENVIRONMENT=production together with a random SECRET_KEY and ACCESS_CODE"
+                )
         if self.is_production:
             if not self.public_base_url.startswith("https://"):
                 errors.append("PUBLIC_BASE_URL must use https:// in production")

@@ -34,12 +34,13 @@ def make_engine(url: str, **kwargs) -> Engine:
     """Create an engine; SQLite engines get the pragmas and BEGIN handling described above."""
     sa_url = make_url(url)
     if sa_url.get_backend_name() != "sqlite":
-        return create_engine(url, pool_pre_ping=True, **kwargs)
+        return create_engine(url, pool_pre_ping=True, hide_parameters=True, **kwargs)
 
     connect_args = kwargs.pop("connect_args", {})
     connect_args.setdefault("check_same_thread", False)
     connect_args.setdefault("timeout", BUSY_TIMEOUT_MS / 1000)
-    engine = create_engine(url, connect_args=connect_args, **kwargs)
+    # hide_parameters: logged DB errors must not carry bound values (token hashes, TOTP secrets, ...)
+    engine = create_engine(url, connect_args=connect_args, hide_parameters=True, **kwargs)
     in_memory = sa_url.database in (None, "", ":memory:")
 
     @event.listens_for(engine, "connect")
