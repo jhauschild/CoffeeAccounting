@@ -1,0 +1,31 @@
+# Production-style deployment: one app service behind a reverse proxy on the host (see deploy/).
+#
+#   cp .env.example .env            # edit: PUBLIC_BASE_URL, SECRET_KEY, ACCESS_CODE, ...
+#   docker compose build
+#   docker compose run --rm app alembic upgrade head     # explicit migration step (never implicit)
+#   docker compose up -d
+#
+# Run exactly one replica: the application requires a single process (see README).
+services:
+  app:
+    build: .
+    image: coffee-ledger:latest
+    env_file: .env
+    environment:
+      # The database always lives in the named volume, whatever .env says.
+      DATABASE_URL: sqlite:////data/coffee.db
+    ports:
+      # Only the local reverse proxy may reach the app; never publish 8000 on a public interface.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - coffee_data:/data
+      # Backups written by scripts/backup.sh. Create it first and let the container user write to it:
+      #   mkdir -p backups && sudo chown 10001 backups
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  coffee_data:
