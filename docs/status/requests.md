@@ -1,0 +1,2 @@
+- core-b → owner A, `app/services/users.py` `merge_users`: replace the direct `update(UserSession)` with `app.services.sessions.revoke_user_sessions(db, duplicate.id, now)` (same semantics, returns count).
+- core-b → owner A, `app/services/users.py` `create_user`: add optional kwarg `user_id: uuid.UUID | None = None` (sets `User.id`). Then `app/services/onboarding._new_user` (B) can call `create_user` instead of mirroring it; needed for the registration one-time-token scheme (deterministic user id = PK-enforced single use).
