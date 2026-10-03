@@ -22,7 +22,7 @@ from app.web.middleware import no_store
 
 router = APIRouter()
 
-_INT_RE = re.compile(r"^[+-]?\d{1,4}$")
+_INT_RE = re.compile(r"^[+-]?[0-9]{1,4}$")
 
 
 def _optional_uuid(value: str | None) -> uuid.UUID | None:

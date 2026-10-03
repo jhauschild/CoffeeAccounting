@@ -96,8 +96,6 @@ def test_adjustment_route_rejects_non_integer_quantity(app, db, user, price):
     assert [(e.type, e.quantity, e.amount_cents) for e in events(db)] == [("adjustment", 2, 100)]
 
 
-@pytest.mark.xfail(strict=True, reason="BUG(low): money/int regexes use \\d, which accepts non-ASCII digits "
-                                       "(e.g. Arabic-Indic, full-width); PROMPT §6 asks for strict parsing")
 @pytest.mark.parametrize("text", ["١٢,٥٠", "１２.５０"])
 def test_parse_money_rejects_non_ascii_digits(text):
     with pytest.raises(InvalidAmount):

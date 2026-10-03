@@ -361,7 +361,7 @@ def begin_enrollment(db: Session, admin: AdminUser) -> str:
 def _totp_matches(db: Session, admin: AdminUser, code: str, now: datetime) -> bool:
     """Valid 6-digit TOTP code (±1 step) that was not accepted before (no replay)."""
     code = _normalize_code(code)
-    if not admin.totp_secret or not re.fullmatch(r"\d{6}", code):
+    if not admin.totp_secret or not re.fullmatch(r"[0-9]{6}", code):
         return False
     if not pyotp.TOTP(admin.totp_secret).verify(code, for_time=now, valid_window=1):
         return False

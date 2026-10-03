@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.services.errors import InvalidAmount
 
 MAX_INPUT_LENGTH = 16
-_MONEY_RE = re.compile(r"^([+-]?)(\d{1,9})(?:[.,](\d{1,2}))?$")
+_MONEY_RE = re.compile(r"^([+-]?)([0-9]{1,9})(?:[.,]([0-9]{1,2}))?$")
 
 
 def parse_money(text: str, *, allow_negative: bool = True, allow_zero: bool = False) -> int:
