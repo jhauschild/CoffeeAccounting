@@ -1,0 +1,13 @@
+{
+  "rate_limit_policy": {"max_concurrent_agents": 2, "backoff_minutes": [10, 30, 60], "max_attempts_per_agent": 3},
+  "agents": {
+    "core-a": {"brief": "docs/agents/01a-core-ledger.md", "dir": "/home/claude/coffee-ledger", "model": "opus", "status": "pending", "attempts": 0, "last_commit": null},
+    "core-b": {"brief": "docs/agents/01b-core-platform.md", "dir": "/home/claude/coffee-ledger", "model": "opus", "status": "pending", "attempts": 0, "last_commit": null},
+    "user-web": {"brief": "docs/agents/02-user-web.md", "dir": "/home/claude/wt/user-web", "model": "sonnet", "status": "pending", "attempts": 0, "last_commit": null},
+    "admin": {"brief": "docs/agents/03-admin.md", "dir": "/home/claude/wt/admin", "model": "sonnet", "status": "pending", "attempts": 0, "last_commit": null},
+    "ops": {"brief": "docs/agents/04-ops.md", "dir": "/home/claude/wt/ops", "model": "sonnet", "status": "pending", "attempts": 0, "last_commit": null},
+    "ledger-audit": {"brief": "docs/agents/05-ledger-audit.md", "dir": "/home/claude/wt/audit-ledger", "model": "opus", "status": "pending", "attempts": 0, "last_commit": null},
+    "security": {"brief": "docs/agents/06-security-review.md", "dir": "/home/claude/wt/audit-security", "model": "opus", "status": "pending", "attempts": 0, "last_commit": null},
+    "acceptance": {"brief": "docs/agents/07-acceptance.md", "dir": "/home/claude/wt/acceptance", "model": "sonnet", "status": "pending", "attempts": 0, "last_commit": null}
+  }
+}
