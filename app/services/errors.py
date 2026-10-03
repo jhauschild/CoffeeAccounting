@@ -1,0 +1,51 @@
+"""Typed service-layer exceptions. Routes map them to safe pages/messages via `code`."""
+
+
+class ServiceError(Exception):
+    code = "error"
+
+    def __init__(self, message: str = "", **context):
+        super().__init__(message or self.code)
+        self.context = context
+
+
+class NotFound(ServiceError):
+    code = "not_found"
+
+
+class Forbidden(ServiceError):
+    code = "forbidden"
+
+
+class UserInactive(ServiceError):
+    code = "user_inactive"
+
+
+class NoPriceConfigured(ServiceError):
+    code = "no_price"
+
+
+class AlreadyReversed(ServiceError):
+    code = "already_reversed"
+
+
+class UndoNotAllowed(ServiceError):
+    code = "undo_not_allowed"
+
+
+class InvalidInput(ServiceError):
+    """Generic validation failure (bad name, unknown chair, bad date, ...)."""
+
+    code = "invalid_input"
+
+
+class InvalidAmount(InvalidInput):
+    code = "invalid_amount"
+
+
+class Conflict(ServiceError):
+    code = "conflict"
+
+
+class RateLimited(ServiceError):
+    code = "rate_limited"
