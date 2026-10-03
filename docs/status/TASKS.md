@@ -1,0 +1,37 @@
+# Task ledger (v2)
+
+Resume rule for any session: read this file and docs/V2-CONTRACT.md, take the first `todo` task whose dependencies are `done`, do only that task, commit when green, update this file. Two failed fixes of one failure: mark `blocked`, write the error, stop. Branch: `v2`. Tests: only your own files; the full suite runs at gates.
+
+Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
+
+| Id | Task | Tier | Depends | Status | Result |
+| --- | --- | --- | --- | --- | --- |
+| 0.1 | Restore repo from bundle, baseline tests | - | - | done | 775 passed (e2e file excluded), 56 s |
+| 0.2 | Resolve plan decisions | - | 0.1 | done | D1 squash, D2 yes, D3 yes (V2-CONTRACT.md) |
+| 0.3 | V2-CONTRACT.md and this ledger | - | 0.2 | done | |
+| 1.1 | Squash migration, models, CHECKs; downgrade/upgrade/alembic check | H | 0.3 | todo | |
+| 1.2 | Config additions, passwords.py | L | 1.1 | todo | |
+| 1.3 | Ledger: kind, idempotency, collector_admin_id, month shots, set_balance | H | 1.1 | todo | |
+| 1.4 | groups.py, remittances, check-ledger additions | H | 1.3 | todo | |
+| 1.5 | authz by own chair, overview.py | L | 1.3 | todo | |
+| 2.1 | Mailer interface, memory and file backends, caps | L | 1.2 | todo | |
+| 2.2 | Encrypted credential store, smtp backend, fake-SMTP and credential tests | H | 2.1 | todo | |
+| 2.3 | Member registration and verification | H | 2.1 | todo | |
+| 2.4 | Guest registration, sponsor approval, reassign | H | 2.3 | todo | |
+| 2.5 | Login, forgot/reset, limits, pending-action change, gate removal | H | 2.3 | todo | |
+| 3.1 | User pages and strings for 2.3-2.5 | L | 2.5 | todo | |
+| 3.2 | Scan result page, account page | L | 1.3 | todo | |
+| 4.1 | Admin login for group admins, TOTP enrolment | H | 1.1 | todo | |
+| 4.2 | Step-up dependency and confirm pages | H | 4.1 | todo | |
+| 4.3 | Role button, /admin/admins, sponsor reassign UI | L | 4.1 | todo | |
+| 4.4 | /admin/groups, remittances UI, set balance, CSV | H | 4.2, 1.4 | todo | |
+| 4.5 | CLI setup commands, QR page with 4 codes, dashboard tiles | L | 2.2 | todo | |
+| 5.1 | /overview and /overview/people | L | 1.5 | todo | |
+| 5.2 | Person page, chairs, prices, privacy sentinel test | H | 5.1 | todo | |
+| 6.1 | .env.example, compose secrets volume, backup exclusion, README, privacy, smoke | L | 2-5 | todo | |
+| 6.2 | Real docker compose up check | L | 6.1 | todo | |
+| 7.1 | Playwright e2e rewrite | L | 3, 5 | todo | |
+| 7.2 | Ledger audit and security review (fresh reviewer) | H | all | todo | |
+| 7.3 | Acceptance run, ACCEPTANCE.md update | L | 7.2 | todo | |
+
+Gates: M4 after 2.5, M5 after 4.5, M6 after 7.3. At each gate: full suite, alembic check, commit, then bundle (see docs/status/PERSIST.md).
