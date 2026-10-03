@@ -16,12 +16,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import COFFEE_KINDS, COFFEE_QUANTITY, AdminUser, ConsumptionEvent, PaymentEvent, User
+from app.models import (
+    COFFEE_KINDS,
+    COFFEE_QUANTITY,
+    PAYMENT_KINDS,
+    AdminUser,
+    ConsumptionEvent,
+    PaymentEvent,
+    User,
+)
 from app.services import audit
-from app.services.authz import ensure_admin_can_access_user
+from app.services.authz import ensure_admin_can_access_user, require_global
 from app.services.errors import (
     AlreadyReversed,
     Conflict,
+    Forbidden,
     InvalidAmount,
     InvalidInput,
     NoPriceConfigured,
@@ -32,7 +41,7 @@ from app.services.errors import (
 )
 from app.services.prices import clean_note, get_price_in_effect
 from app.services.users import effective_user_id, member_ids_select
-from app.timeutil import ensure_utc, utcnow
+from app.timeutil import ensure_utc, local_month_bounds, utcnow
 
 MAX_ADJUSTMENT_SHOTS = 1000
 MAX_AMOUNT_CENTS = 1_000_000_00
@@ -269,6 +278,17 @@ def _access_effective(db: Session, admin: AdminUser, user_id: uuid.UUID) -> uuid
     return eff
 
 
+def _ensure_not_own_account(db: Session, admin: AdminUser, user_id: uuid.UUID) -> None:
+    """Own-balance rule: a group admin (role `chair`) may not post money or corrections to the
+    account linked to themselves. Compared on effective (post-merge) ids. Head admins may."""
+    if admin.role != "chair" or admin.user_id is None:
+        return
+    own = effective_user_id(db, admin.user_id) or admin.user_id
+    target = effective_user_id(db, user_id) or user_id
+    if own == target:
+        raise Forbidden("a group admin cannot change their own account")
+
+
 def admin_reverse_event(
     db: Session, *, admin: AdminUser, event_id: uuid.UUID, note: str | None = None, ip: str | None = None,
     now: datetime | None = None,
@@ -279,6 +299,7 @@ def admin_reverse_event(
     if event is None:
         raise NotFound("event not found")
     _access_effective(db, admin, event.user_id)
+    _ensure_not_own_account(db, admin, event.user_id)
     if event.type == "reversal":
         raise Conflict("a reversal cannot be reversed")
     if is_reversed(db, event.id):
@@ -329,6 +350,7 @@ def add_adjustment(
     an override must not have the opposite sign of `quantity` (0 is allowed)."""
     now = _now(now)
     user = _target_user_for_admin(db, admin, user_id)
+    _ensure_not_own_account(db, admin, user.id)
     quantity = _check_int(quantity, "quantity", MAX_ADJUSTMENT_SHOTS)
     price = get_price_in_effect(db, now)
     if amount_cents is None:
@@ -361,25 +383,57 @@ def add_adjustment(
     return event
 
 
+def _payment_by_key(db: Session, key: str) -> PaymentEvent | None:
+    return db.scalars(select(PaymentEvent).where(PaymentEvent.idempotency_key == key)).first()
+
+
+def _check_key(key: str | None) -> str | None:
+    if key is None:
+        return None
+    if not isinstance(key, str) or not key or len(key) > MAX_NONCE_LENGTH:
+        raise InvalidInput("invalid idempotency key")
+    return key
+
+
 def add_payment(
     db: Session,
     *,
     admin: AdminUser,
     user_id: uuid.UUID,
     amount_cents: int,
+    kind: str = "cash",
     note: str | None = None,
     correction_of_id: uuid.UUID | None = None,
+    idempotency_key: str | None = None,
     ip: str | None = None,
     now: datetime | None = None,
 ) -> PaymentEvent:
     """Record money received (positive) or paid back (negative) outside the app.
 
-    With `correction_of_id` the new event corrects an earlier payment of the same
-    (effective) user; each payment can be corrected at most once.
+    `kind="cash"` (default): the recording admin is the collector (`collector_admin_id`).
+    `kind="bookkeeping"` (head admin only, normally via `set_balance`): no collector, never
+    counted as collected. With `correction_of_id` the new event corrects an earlier payment of
+    the same (effective) user and COPIES kind and `collector_admin_id` from it, whoever records
+    the correction; each payment can be corrected at most once.
+
+    Idempotent on `idempotency_key`: if a payment with this key exists it is returned and
+    nothing is inserted (a key reused for a different user or amount raises `Conflict`).
+    A group admin cannot post to their own linked account (`Forbidden`).
     """
     now = _now(now)
+    if kind not in PAYMENT_KINDS:
+        raise InvalidInput("invalid payment kind")
+    key = _check_key(idempotency_key)
     user = _target_user_for_admin(db, admin, user_id)
+    _ensure_not_own_account(db, admin, user.id)
     amount_cents = _check_int(amount_cents, "amount", MAX_AMOUNT_CENTS)
+    if kind == "bookkeeping":
+        require_global(admin)
+    if key is not None:
+        existing = _payment_by_key(db, key)
+        if existing is not None:
+            return _same_payment_or_conflict(db, existing, user.id, amount_cents)
+    collector_id: uuid.UUID | None = admin.id if kind == "cash" else None
     if correction_of_id is not None:
         original = db.get(PaymentEvent, correction_of_id)
         if original is None:
@@ -388,27 +442,84 @@ def add_payment(
             raise Conflict("payment belongs to another profile")
         if db.scalar(select(PaymentEvent.id).where(PaymentEvent.correction_of_id == original.id)) is not None:
             raise Conflict("payment has already been corrected")
+        kind, collector_id = original.kind, original.collector_admin_id
+        if kind == "bookkeeping":
+            require_global(admin)
     payment = PaymentEvent(
         user_id=user.id,
         chair_id=user.chair_id,
         amount_cents=amount_cents,
         admin_id=admin.id,
         correction_of_id=correction_of_id,
+        kind=kind,
+        collector_admin_id=collector_id,
+        idempotency_key=key,
         note=clean_note(note),
         created_at=now,
     )
 
     def _conflict():
+        if key is not None:
+            found = _payment_by_key(db, key)
+            if found is not None:
+                return _same_payment_or_conflict(db, found, user.id, amount_cents)
         raise Conflict("payment has already been corrected")
 
-    _insert_once(db, payment, on_conflict=_conflict)
+    stored = _insert_once(db, payment, on_conflict=_conflict)
+    if stored is not payment:
+        return stored
     audit.log(db, actor_type="admin", actor_id=admin.id,
               action="payment.corrected" if correction_of_id else "payment.recorded",
               target_type="user", target_id=user.id,
-              metadata={"payment_id": str(payment.id), "amount_cents": amount_cents,
+              metadata={"payment_id": str(payment.id), "amount_cents": amount_cents, "kind": kind,
                         "correction_of_id": str(correction_of_id) if correction_of_id else None},
               ip=ip, now=now)
     return payment
+
+
+def _same_payment_or_conflict(db: Session, existing: PaymentEvent, user_id: uuid.UUID, amount_cents: int):
+    if effective_user_id(db, existing.user_id) != user_id or existing.amount_cents != amount_cents:
+        raise Conflict("idempotency key already used for a different payment")
+    return existing
+
+
+def set_balance(
+    db: Session,
+    *,
+    admin: AdminUser,
+    user_id: uuid.UUID,
+    target_balance_cents: int,
+    idempotency_key: str,
+    note: str | None = None,
+    ip: str | None = None,
+    now: datetime | None = None,
+) -> PaymentEvent:
+    """Head admin only: make the user's balance (consumed - paid, positive = owes) equal
+    `target_balance_cents` by booking one `bookkeeping` payment of (current - target).
+
+    Append-only: nothing is edited. Idempotent on `idempotency_key` (a repeat returns the
+    event booked the first time, even though the balance now already equals the target).
+    If the balance already equals the target and the key is new, raises `InvalidAmount`
+    (no zero-amount event is ever written). Non-head admins get `Forbidden`.
+    """
+    require_global(admin)
+    key = _check_key(idempotency_key)
+    if key is None:
+        raise InvalidInput("idempotency key required")
+    if isinstance(target_balance_cents, bool) or not isinstance(target_balance_cents, int) \
+            or abs(target_balance_cents) > MAX_AMOUNT_CENTS:
+        raise InvalidAmount("invalid target balance")
+    user = _target_user_for_admin(db, admin, user_id)
+    existing = _payment_by_key(db, key)
+    if existing is not None:
+        if existing.kind != "bookkeeping" or effective_user_id(db, existing.user_id) != user.id:
+            raise Conflict("idempotency key already used for a different payment")
+        return existing
+    diff = get_totals(db, user.id).balance_cents - target_balance_cents
+    if diff == 0:
+        raise InvalidAmount("balance already equals the target")
+    return add_payment(db, admin=admin, user_id=user.id, amount_cents=diff, kind="bookkeeping",
+                       idempotency_key=key, note=note, ip=ip, now=now)
 
 
 # ----- reads --------------------------------------------------------------------------------
@@ -425,6 +536,21 @@ def get_totals(db: Session, user_id: uuid.UUID) -> Totals:
         select(func.coalesce(func.sum(PaymentEvent.amount_cents), 0)).where(PaymentEvent.user_id.in_(members))
     )
     return Totals(int(shots), int(consumed), int(paid), int(consumed) - int(paid))
+
+
+def get_month_shots(db: Session, user_id: uuid.UUID, now: datetime | None = None) -> int:
+    """Net shots (reversals netted out) of the effective user in the current LOCAL calendar
+    month (LOCAL_TIMEZONE, DST-safe half-open bounds); includes merged profiles."""
+    eff = effective_user_id(db, user_id) or user_id
+    start, end = local_month_bounds(_now(now))
+    total = db.scalar(
+        select(func.coalesce(func.sum(ConsumptionEvent.quantity), 0)).where(
+            ConsumptionEvent.user_id.in_(member_ids_select(eff)),
+            ConsumptionEvent.created_at >= start,
+            ConsumptionEvent.created_at < end,
+        )
+    )
+    return int(total)
 
 
 def recent_consumption(db: Session, user_id: uuid.UUID, limit: int | None = 20) -> list[ConsumptionEvent]:
