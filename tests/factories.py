@@ -4,8 +4,11 @@ All factories take the ORM session first and commit by default (`commit=False` t
 
 make_chair(db, short_name=None, full_name=None, active=True)            -> Chair
 make_user(db, display_name="Test User", chair=None, status="active")     -> User   (creates a chair if None)
+make_member(db, display_name, chair=None, username=None, email=None)       -> User   (v2 member)
+make_guest(db, sponsor, display_name, username=None)                      -> User   (v2 guest)
 make_admin(db, role="global", chairs=(), username=None, active=True,
            password_hash="!")                                            -> AdminUser
+           (role "chair" = group admin: creates a linked member in chairs[0] or a new chair)
            (password_hash "!" matches no password; admin-auth tests set a real hash)
 set_price(db, cents=50, effective_from=None, admin=None)                 -> Price
            (direct insert, may be backdated; default effective_from = now - 1 day)
@@ -24,7 +27,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from app.models import AdminChair, AdminUser, Chair, ConsumptionEvent, PaymentEvent, Price, User, UserSession
+from app.models import AdminUser, Chair, ConsumptionEvent, PaymentEvent, Price, User, UserSession
 from app.services import ledger
 from app.services.users import normalize_name
 from app.timeutil import utcnow
@@ -58,15 +61,39 @@ def make_user(db, display_name: str = "Test User", chair: Chair | None = None, s
     return _done(db, user, commit)
 
 
+def make_member(db, display_name: str = "Test Member", chair: Chair | None = None, username: str | None = None,
+                email: str | None = None, password_hash: str = "!", commit: bool = True) -> User:
+    """A v2 member account (username, TUM-style email, verified)."""
+    n = next(_seq)
+    username = username or f"member{n}"
+    user = make_user(db, display_name, chair, commit=False)
+    user.username, user.username_normalized = username, username.casefold()
+    user.account_kind, user.email = "member", email or f"{username}@tum.de"
+    user.password_hash, user.verified_at = password_hash, utcnow()
+    return _done(db, user, commit)
+
+
+def make_guest(db, sponsor: User, display_name: str = "Test Guest", username: str | None = None,
+               password_hash: str = "!", commit: bool = True) -> User:
+    """A v2 guest account vouched for by `sponsor` (chair inherited from the sponsor)."""
+    username = username or f"guest{next(_seq)}"
+    user = make_user(db, display_name, sponsor.chair, commit=False)
+    user.username, user.username_normalized = username, username.casefold()
+    user.account_kind, user.sponsor_id = "guest", sponsor.id
+    user.password_hash, user.verified_at = password_hash, utcnow()
+    return _done(db, user, commit)
+
+
 def make_admin(db, role: str = "global", chairs=(), username: str | None = None, active: bool = True,
                password_hash: str = "!", commit: bool = True) -> AdminUser:
     username = username or f"admin{next(_seq)}"
+    linked = None
+    if role == "chair":
+        # v2: a group admin is linked to a member account; its chair is the user's chair.
+        linked = make_member(db, chair=chairs[0] if chairs else None, username=f"member-{username}", commit=False)
     admin = AdminUser(username=username, username_normalized=username.casefold(), password_hash=password_hash,
-                      role=role, active=active, recovery_codes=[])
+                      role=role, active=active, recovery_codes=[], user_id=linked.id if linked else None)
     db.add(admin)
-    db.flush()
-    for chair in chairs:
-        db.add(AdminChair(admin_id=admin.id, chair_id=chair.id))
     db.flush()
     db.refresh(admin)
     return _done(db, admin, commit)

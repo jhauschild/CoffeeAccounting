@@ -32,12 +32,12 @@ from datetime import datetime, timedelta
 import pyotp
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import write_session
-from app.models import ADMIN_ROLES, AdminChair, AdminSession, AdminUser, Chair
+from app.models import ADMIN_ROLES, AdminSession, AdminUser, Chair
 from app.services import audit, ratelimit, signing
 from app.services.errors import Conflict, InvalidInput, NotFound
 from app.timeutil import ensure_utc, utcnow
@@ -146,6 +146,8 @@ def create_admin(
     if role not in ADMIN_ROLES:
         raise InvalidInput("role must be 'global' or 'chair'")
     chair_list = _resolve_chairs(db, chairs)
+    if role == "chair":  # v2 (task 1.1): needs a linked user account (admin_users.user_id); built in task 4.x
+        raise InvalidInput("group admins are created from a user account; not available from this path yet")
     if role == "chair" and not chair_list:
         raise InvalidInput("a chair administrator needs at least one chair")
     if role == "global" and chair_list:
@@ -156,9 +158,6 @@ def create_admin(
                       password_hash=hash_password(password), role=role, active=True, recovery_codes=[],
                       created_at=now)
     db.add(admin)
-    db.flush()
-    for chair in chair_list:
-        db.add(AdminChair(admin_id=admin.id, chair_id=chair.id))
     db.flush()
     db.refresh(admin)
     actor_type, actor_id = _sys(actor)
@@ -187,20 +186,8 @@ def bootstrap_admin(db: Session, *, now: datetime | None = None) -> AdminUser | 
 
 def set_admin_chairs(db: Session, admin: AdminUser, chairs: Iterable, *, actor: AdminUser | None = None,
                      ip: str | None = None) -> AdminUser:
-    chair_list = _resolve_chairs(db, chairs)
-    if admin.role != "chair":
-        raise InvalidInput("only chair administrators have chair assignments")
-    if not chair_list:
-        raise InvalidInput("a chair administrator needs at least one chair")
-    db.execute(delete(AdminChair).where(AdminChair.admin_id == admin.id))
-    for chair in chair_list:
-        db.add(AdminChair(admin_id=admin.id, chair_id=chair.id))
-    db.flush()
-    db.refresh(admin)
-    actor_type, actor_id = _sys(actor)
-    audit.log(db, actor_type=actor_type, actor_id=actor_id, action="admin.chairs_set", target_type="admin",
-              target_id=admin.id, metadata={"chairs": sorted(c.short_name for c in chair_list)}, ip=ip)
-    return admin
+    # v2 (task 1.1): admin_chairs is gone; a group admin's chair is the chair of their linked user.
+    raise InvalidInput("chair assignments were removed in v2; group admins use their own user's chair")
 
 
 def reset_password(db: Session, admin: AdminUser, new_password: str, *, actor: AdminUser | None = None,

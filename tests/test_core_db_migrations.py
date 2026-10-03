@@ -59,8 +59,9 @@ def test_migrations_up_down_up_and_check(tmp_path):
         insp = inspect(eng)
         tables = set(insp.get_table_names())
         assert {"chairs", "users", "prices", "consumption_events", "payment_events", "user_sessions",
-                "pending_actions", "admin_users", "admin_chairs", "admin_sessions", "rate_limit_events",
-                "audit_log"} <= tables
+                "pending_actions", "admin_users", "admin_sessions", "rate_limit_events", "audit_log",
+                "pending_registrations", "password_reset_tokens", "group_remittances", "used_nonces"} <= tables
+        assert "admin_chairs" not in tables
         assert "effective_users" in insp.get_view_names()
         with eng.connect() as conn:
             triggers = conn.execute(text("SELECT name FROM sqlite_master WHERE type='trigger'")).scalars().all()

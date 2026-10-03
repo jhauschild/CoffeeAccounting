@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AdminChair, AdminUser, User
+from app.models import AdminUser, User
 from app.services.errors import Forbidden, NotFound
 
 
@@ -37,8 +36,8 @@ def visible_chair_ids(db: Session, admin: AdminUser) -> set[uuid.UUID] | None:
     require_active(admin)
     if admin.role == "global":
         return None
-    rows = db.scalars(select(AdminChair.chair_id).where(AdminChair.admin_id == admin.id))
-    return set(rows)
+    # v2: a group admin sees exactly the chair of their own user account (admin_chairs is gone).
+    return {chair.id for chair in admin.chairs}
 
 
 def ensure_admin_can_access_chair(db: Session, admin: AdminUser, chair_id: uuid.UUID) -> None:
