@@ -160,7 +160,8 @@ def test_readme_cli_examples_match_the_real_parser():
         argv = [a for a in argv if not a.endswith("]") or not a.startswith("[")]
         args = parser.parse_args(argv)  # raises SystemExit on an unknown command or flag
         seen.add(args.command)
-    assert {"create-admin", "set-price", "check-ledger", "purge-expired", "qr", "list-admins"} <= seen
+    assert {"create-admin", "set-price", "check-ledger", "purge-expired", "qr", "list-admins", "setup",
+            "setup-mail", "mail-status", "test-mail", "clear-mail"} <= seen
     for name in ("reset-admin-password", "reset-admin-totp", "disable-admin", "bootstrap-admin"):
         assert name in readme
 
@@ -173,6 +174,8 @@ def test_readme_documents_every_environment_variable_and_the_required_sentence()
     for field in Settings.model_fields:
         assert f"`{field.upper()}`" in readme, field
         assert field.upper() in env_example, field
-    assert ("Normal-user identity is based on a long-lived browser session and voluntary profile selection. "
-            "It does not cryptographically prove the user's real-world identity. This is intentional for a "
-            "low-stakes, trust-based departmental coffee ledger.") in readme
+    assert ("Identity is a verified TUM email (members) or a member's vouching (guests), plus a password. "
+            "It does not prove the user's real-world identity. This is intentional for a low-stakes, "
+            "trust-based departmental coffee ledger.") in readme
+    assert "voluntary profile selection" not in readme
+    assert "Normal-user identity is based on" not in readme

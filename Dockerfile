@@ -5,7 +5,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DATABASE_URL=sqlite:////data/coffee.db
+    DATABASE_URL=sqlite:////data/coffee.db \
+    SECRETS_DIR=/secrets
 
 WORKDIR /app
 
@@ -14,7 +15,9 @@ COPY requirements.txt ./
 RUN pip install -r requirements.txt \
  && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app \
  && mkdir /data /backups \
- && chown app:app /data /backups
+ && chown app:app /data /backups \
+ && mkdir -m 0700 /secrets \
+ && chown app:app /secrets
 
 COPY alembic.ini ./
 COPY app ./app
@@ -23,6 +26,9 @@ COPY static ./static
 COPY templates ./templates
 COPY scripts ./scripts
 
+# /secrets holds the encrypted mail login (python -m app.cli setup-mail). It is created here, mode 0700 and
+# owned by the app user, so that a named volume mounted on it inherits both on first use. The image itself
+# contains no mail login; the compose file mounts the `secrets` volume here and nowhere else.
 USER app
 VOLUME ["/data"]
 EXPOSE 8000

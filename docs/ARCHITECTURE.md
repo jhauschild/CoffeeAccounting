@@ -1,144 +1,80 @@
-# Architecture contract
+# Architecture (v2, as built)
 
-Source of truth for requirements: `docs/PROMPT.md` (section numbers below refer to it). This file fixes module boundaries, file ownership and service interfaces so several agents can work without colliding. Python 3.12+ (3.13 is installed in the build sandbox; code must run on both). Use `/home/claude/venv/bin/python`.
+Requirements: `docs/PROMPT.md` (original, section numbers below refer to it) and the v2 plan `docs/PLAN-v2.md` with the amendments in `docs/PLAN-v2-rev4.md`. The **v2 contract** `docs/V2-CONTRACT.md` is authoritative for the v2 decisions, derived values and service interfaces; this file describes the structure of the code as it was built and does not repeat the contract. Python 3.12+.
 
-## Layout and ownership
-
-Owners: **A** = core-ledger agent, **B** = core-platform agent, **U** = user-web agent, **M** = admin agent, **O** = ops agent. Only the owner edits a file. Need a change in a file you don't own? Append a request to `docs/status/requests.md` (who, file, what, why) and carry on.
+One FastAPI process (Jinja2 server-rendered pages, plain CSS, small static JS files, no CDN, no inline JS/CSS) with one SQLite database in WAL mode, behind a TLS-terminating reverse proxy.
 
 ```
-app/
-  config.py            A  Settings (pydantic-settings), production validation (§9, §11)
-  db.py                A  engine, SQLite pragmas (WAL, FK, busy_timeout), read_session(), write_session()
-  models.py            A  ALL tables, including admin/auth/audit/rate-limit tables (see below)
-  money.py             A  format_money(cents), parse_money(str)->cents
-  timeutil.py          A  utcnow(), to_local(), local_day/week/month bounds
-  services/
-    prices.py          A
-    ledger.py          A  record_coffee, undo, admin reverse/adjust/payment, totals
-    users.py           A  normalize_name, create/search/update/deactivate/merge, effective-user helper
-    chairs.py          A
-    audit.py           A
-    authz.py           A  scope checks for admin actors
-    checker.py         A  check-ledger logic
-    sessions.py        B  user sessions (hash, issue, resolve, revoke, rotate)
-    pending.py         B  pending_actions
-    onboarding.py      B  register / select profile (+ consume pending action) in ONE transaction
-    gate.py            B  access-code check, signed gate cookie
-    ratelimit.py       B  DB-backed limiter
-    admin_auth.py      M  admin accounts, passwords (Argon2id), TOTP, admin sessions, login limiter use
-    stats.py           M  dashboard + user-table queries
-    exports.py         M  CSV (injection-safe)
-  web/
-    middleware.py      B  security headers/CSP/HSTS, request-size limit, trusted-proxy IP
-    deps.py            B  FastAPI deps: db, current user session, csrf, client IP
-    tokens.py          B  signed scan token, CSRF tokens
-    routes_user.py     U  (B creates an empty stub `router`)
-    user_*.py          U  any helper modules
-    routes_admin.py    M  (B creates an empty stub `router`)
-    admin_*.py         M
-    health.py          B  /healthz, /readyz
-  strings.py           B  t(key, **kw); merges strings_user + strings_admin + strings_common
-  strings_common.py    B
-  strings_user.py      U  (B creates empty dict)
-  strings_admin.py     M  (B creates empty dict)
-  main.py              B  create_app(); includes routers from routes_user, routes_admin, health
-  cli.py               A  argparse dispatcher; commands: check-ledger, set-price, purge-expired; calls cli_admin.register()
-  cli_admin.py         M  (A creates stub register(subparsers)); commands: create-admin, set-admin-chairs, reset-admin-password, reset-admin-totp, disable-admin, qr
-templates/
-  base.html            B  blocks: title, head_extra, content, scripts_extra; local CSS only
-  user/                U
-  admin/               M
-static/
-  app.css              B  mobile-first base styles
-  user.css, scan.js, user/   U
-  admin.css, admin/    M
-migrations/            A  ONLY A edits migrations (single Alembic head). A creates the whole schema up front.
-tests/
-  conftest.py, factories.py   A (B may append fixtures at the end of conftest in its own section)
-  test_core_*.py       A      test_platform_*.py   B
-  test_user_*.py, test_e2e_*.py   U      test_admin_*.py   M
-Dockerfile, docker-compose.yml, .dockerignore, .env.example, scripts/, deploy/, README.md   O
-docs/                  orchestrator (agents may write only docs/status/<their-name>.md)
+phone ──https──> reverse proxy ──http──> uvicorn (1 worker) ── SQLite file (/data/coffee.db)
+                                              └── encrypted mail login (/secrets/mail-login.enc) ──smtp──> postout.lrz.de
 ```
 
-## Schema (all created by agent A in one initial migration; names are final)
+## Layers and rules
 
-`chairs`, `users`, `prices`, `consumption_events`, `payment_events`, `user_sessions`, `pending_actions`, `admin_users`, `admin_chairs`, `admin_sessions`, `rate_limit_events`, `audit_log`. Columns for chairs, users, prices, consumption_events, payment_events, and every CHECK/UNIQUE are in PROMPT §4. Additional tables:
+- **Services** (`app/services/`) hold every business rule. Mutating functions take a `Session` opened by the caller with `write_session()` (`BEGIN IMMEDIATE`), never commit and never open their own session. Read functions accept either session type. Typed errors come from `app/services/errors.py` (`NotFound`, `Forbidden`, `UserInactive`, `NoPriceConfigured`, `AlreadyReversed`, `UndoNotAllowed`, `InvalidAmount`, `InvalidInput`, `InvalidPassword`, `Conflict`, `RateLimited`, `MailError`, ...); routes map them to safe pages through the error `code`.
+- **Routes** (`app/web/`) parse input, open the session, call services, render templates. Templates hold no rules. Every user-facing string goes through `t("key")` (`app/strings*.py`).
+- **Ledger** is append-only: consumption events, payment events, prices, group remittances and the audit log are never edited or deleted (triggers reject changes to the audit log). Undo, corrections and reversals are new compensating rows. Totals are always computed from the ledger.
+- **Money** is integer cents (`app/money.py`). Timestamps are UTC internally; display and month boundaries use `LOCAL_TIMEZONE` (`app/timeutil.py`).
+- **Keys**: `app/services/keys.py` derives separate keys with HKDF-SHA256 from `SECRET_KEY` (mail-login encryption, token signing per purpose, CSRF, step-up payloads, admin recovery-code MACs).
+- **Single process**: rate limits are database-backed, but SQLite's write lock and the in-process mail status assume one worker.
 
-- `user_sessions`: id, user_id, token_hash (unique), created_at, last_seen_at, expires_at, revoked_at.
-- `pending_actions`: id (random opaque, unique), kind, nonce (unique), created_at, expires_at, consumed_at.
-- `admin_users`: id, username, username_normalized (unique), password_hash, role (`global`|`chair`), active, totp_secret (nullable), totp_enabled, recovery_codes (JSON list of hashes), created_at, last_login_at.
-- `admin_chairs`: admin_id, chair_id (composite PK).
-- `admin_sessions`: id, admin_id, token_hash (unique), created_at, last_seen_at, expires_at, revoked_at, totp_verified, csrf_secret.
-- `rate_limit_events`: id, bucket, key, created_at (index on bucket,key,created_at).
-- `audit_log`: PROMPT §7, with triggers rejecting UPDATE/DELETE.
-- View `effective_users` (id → effective_id following `merged_into_id`), used by all totals.
+## Modules and ownership
 
-## Transaction rules
+Owners (file ownership during the build; later changes follow the same split): **A** core ledger, **B** core platform and mail, **U** user web, **M** admin, **O** ops. Only the owner edits a file.
 
-- `db.read_session()` and `db.write_session()` are context managers yielding a SQLAlchemy `Session`. `write_session()` starts `BEGIN IMMEDIATE`, commits on success, rolls back on exception.
-- Mutating service functions take `db: Session` opened by the caller with `write_session()`; they **never commit** and never open their own session. Read functions accept either.
-- Routes open the session; services hold business rules; templates hold none.
-- Raise typed exceptions from `app/services/errors.py` (A): `NotFound`, `Forbidden`, `UserInactive`, `NoPriceConfigured`, `AlreadyReversed`, `UndoNotAllowed`, `InvalidAmount`, `Conflict`, `RateLimited`. Routes map them to safe pages/messages.
+| Area | Files | Owner |
+| --- | --- | --- |
+| Settings, DB, models, money, time | `app/config.py`, `app/db.py`, `app/models.py`, `app/money.py`, `app/timeutil.py`, `migrations/` (one revision, `0001_initial_schema.py`) | A |
+| Ledger and groups | `services/ledger.py`, `prices.py`, `users.py`, `chairs.py`, `groups.py`, `overview.py` (read-only site queries), `authz.py`, `audit.py`, `checker.py` | A |
+| Passwords and keys | `services/passwords.py`, `services/keys.py` | A (passwords policy shared) |
+| Accounts | `services/registration.py` (members, guests, sponsor approval, reassign), `login.py`, `recovery.py`, `account.py` (password change), `sessions.py`, `pending.py`, `onboarding.py` (sign-in helper shared by login and verification), `ratelimit.py` | B |
+| Mail | `services/mail.py` (Mailer, backends memory/console/file/smtp, caps, background send), `mail_credentials.py` (Fernet store), `mail_status.py` (cross-process status), `mail_templates.py`, `strings_mail.py` | B |
+| Web platform | `web/middleware.py`, `deps.py`, `tokens.py`, `signing.py`, `health.py`, `accesslog.py`, `templating.py`, `main.py`, `strings.py`, `strings_common.py` | B |
+| User pages | `web/routes_user.py`, `user_views.py`, `strings_user.py`, `templates/user/`, `static/user.css`, `scan.js` | U |
+| Open site | `web/routes_overview.py`, `strings_site.py`, `templates/site/`, `static/site.css` | U |
+| Admin | `web/routes_admin.py` and `admin_*.py` (`admin_login`, `admin_users`, `admin_manage`, `admin_roles`, `admin_groups`, `admin_stepup`, `admin_deps`), `services/admin_auth.py`, `stepup.py`, `roles.py`, `stats.py`, `group_report.py`, `exports.py`, `strings_admin.py`, `templates/admin/`, `static/admin*` | M |
+| CLI | `app/cli.py` (check-ledger, set-price, purge-expired), `cli_admin.py` (admins, qr), `cli_setup.py` (setup, setup-mail, mail-status, test-mail, clear-mail) | A / M |
+| Ops | `Dockerfile`, `docker-compose.yml`, `.env.example`, `scripts/`, `deploy/`, `README.md`, `tests/test_ops_*` | O |
 
-## Service interfaces (names and meanings are final; add keyword args freely, do not rename)
+Removed from v1: the access-code gate (`gate.py`), `/join`, `/profiles`, profile selection, `admin_chairs`, `set-admin-chairs`, the `ACCESS_CODE` and `ADMIN_TOTP_REQUIRED` settings.
 
-```python
-# prices.py
-get_price_in_effect(db, at=None) -> Price | None
-add_price(db, *, price_per_shot_cents, effective_from=None, admin_id, note=None) -> Price
-list_prices(db) -> list[Price]
+## Routes
 
-# ledger.py
-@dataclass RecordResult: event: ConsumptionEvent; created: bool
-@dataclass Totals: consumed_shots: int; consumed_amount_cents: int; paid_amount_cents: int; balance_cents: int
-record_coffee(db, *, user_id, kind, nonce, session_id=None) -> RecordResult     # idempotent on nonce; checks active user + price
-undo_coffee(db, *, user_id, session_id, event_id, now=None) -> ConsumptionEvent
-latest_undoable_event(db, *, user_id, session_id, now=None) -> ConsumptionEvent | None
-admin_reverse_event(db, *, admin, event_id, note=None) -> ConsumptionEvent
-add_adjustment(db, *, admin, user_id, quantity, amount_cents=None, note=None) -> ConsumptionEvent
-add_payment(db, *, admin, user_id, amount_cents, note=None, correction_of_id=None) -> PaymentEvent
-get_totals(db, user_id) -> Totals                                              # effective-user aware
-recent_consumption(db, user_id, limit=20); recent_payments(db, user_id, limit=20)
+User and platform (`routes_user.py`, `routes_overview.py`, `health.py`):
 
-# users.py
-normalize_name(s) -> str
-create_user(db, *, display_name, chair_id) -> User
-search_profiles(db, query, limit=50) -> list[PublicProfile]                    # name + chair only
-update_profile(db, *, user_id, display_name=None, chair_id=None, actor_type, actor_id=None) -> User   # audits chair change
-set_user_status(db, *, admin, user_id, active: bool) -> User
-merge_users(db, *, admin, duplicate_id, target_id) -> User                     # global admin only
+| Route | Purpose |
+| --- | --- |
+| `GET /healthz`, `GET /readyz` | process up; database reachable and migrated to the head |
+| `GET /` | home |
+| `GET|POST /coffee/{single,double}` | GET issues a signed token and writes nothing; POST records (or, without a session, parks a pending action and redirects to `/login`) |
+| `GET /coffee/done/{id}`, `POST /coffee/undo/{id}` | result page (balance in words, shots this month), undo within the window |
+| `GET|POST /register`, `POST /register/guest` | member and guest registration forms |
+| `GET|POST /verify/{token}` | member confirmation and sponsor approve or reject; GET writes nothing |
+| `GET|POST /login`, `POST /logout` | username and password sign-in |
+| `GET|POST /forgot`, `GET|POST /reset/{token}` | password recovery by username; GET writes nothing |
+| `GET /account`, `POST /account/password`, `GET|POST /account/edit` | own account |
+| `GET /overview`, `/overview/people`, `/overview/people/{id}`, `/overview/chairs`, `/overview/prices` | open site for signed-in accounts (anonymous: pending `view_site` action, redirect to `/login`); `Cache-Control: private, no-store` |
+| `GET /privacy` | privacy statement |
 
-# authz.py
-ensure_admin_can_access_user(db, admin, user_id) -> None                       # raises Forbidden
-visible_chair_ids(db, admin) -> set[UUID] | None                               # None = all
+Admin (`/admin`, separate cookie `coffee_admin` with `Path=/admin`; a user cookie alone never reaches it; every route is in the route-enumeration test): `login`, `logout`, `totp/setup`, `account` (+ password, session revoke), dashboard (`""`), `users` (+ detail, rename, chair, status, sessions, merge, payment, adjustment, reverse, balance, CSV), `admins` and the group-admin promote/demote buttons, `users/{id}/sponsor`, `groups` (+ remittances and their corrections, CSV), `stepup/confirm` (the only route that executes a balance-changing action), `chairs`, `prices`, `qr` (four codes, `qr/{kind}.svg`), `audit`, `exports`.
 
-# sessions.py (B)
-issue_session(db, user_id, now=None) -> str raw_token                          # stores SHA-256 only
-resolve_session(db, raw_token) -> tuple[UserSession, User] | None              # touches last_seen at most hourly
-revoke_session(db, session_id); revoke_user_sessions(db, user_id)
+## Schema summary
 
-# pending.py / onboarding.py / gate.py / ratelimit.py (B)
-create_pending(db, kind, nonce) -> str pending_id
-register_and_start_session(db, *, display_name, chair_id, pending_id=None) -> OnboardResult(user, raw_token, event|None)
-select_profile_and_start_session(db, *, user_id, pending_id=None, old_session_id=None) -> OnboardResult
-check_access_code(code) -> bool ; make_gate_cookie() ; verify_gate_cookie(value) -> bool
-check_rate(db, bucket, key, limit, window_seconds) -> None  # raises RateLimited
+Single Alembic revision `0001_initial_schema.py` (v2 squashed into the initial migration, `render_as_batch=True`). Tables: `chairs`, `users` (username, `account_kind` member|guest, email for members, `sponsor_id` for guests, `verified_at`, `password_hash`, one `chair_id`), `prices`, `consumption_events`, `payment_events` (`kind` cash|bookkeeping, `idempotency_key`, `collector_admin_id`, `chair_id` at event time), `group_remittances`, `admin_users` (optional `user_id` link for group admins, role `global` | `chair` shown as "group admin"), `admin_sessions` (`stepup_until`), `user_sessions`, `pending_actions` (`single`, `double`, `view_site`), `pending_registrations`, `password_reset_tokens`, `used_nonces`, `rate_limit_events`, `audit_log` (append-only triggers). View `effective_users` resolves merged accounts and underlies every total. CHECK constraints in the migration enforce the member/guest rules and the payment kinds. Details: `docs/V2-CONTRACT.md` and `app/models.py`.
 
-# audit.py
-log(db, *, actor_type, actor_id, action, target_type=None, target_id=None, metadata=None, ip=None) -> None
-```
+## Service interfaces
 
-## Route ownership
+The interface list (ledger, groups, overview, passwords, authz, mail, mail credentials, registration, recovery, step-up) is in `docs/V2-CONTRACT.md`, "New and changed service interfaces". Unchanged v1 interfaces (prices, sessions, pending, ratelimit, audit, users) keep the names in the code; read the module docstrings. Not repeated here.
 
-- **U**: `GET /`, `GET|POST /coffee/{single|double}`, `GET /coffee/done/{event_uuid}`, `POST /coffee/undo/{event_uuid}`, `GET|POST /join`, `GET|POST /register`, `GET /profiles` (+ search), `POST /profiles/select`, `GET /account`, `GET|POST /account/edit`, `POST /account/leave`, `GET /privacy`.
-- **M**: everything under `/admin`: login (password + TOTP), logout, password change, dashboard, users (list/detail/actions), chairs, prices, QR page, audit view, CSV exports.
-- **B**: `/healthz`, `/readyz`, static mount, error handlers (safe 4xx/5xx pages).
+## Ops pieces
+
+- `scripts/run.sh` starts one uvicorn worker with `--proxy-headers`, `--forwarded-allow-ips $TRUSTED_PROXY_IPS` and `--no-access-log`; the application logs requests itself with one-time tokens redacted (`web/accesslog.py`; proxy side: `deploy/README.md`).
+- `scripts/backup.sh`, `restore.sh`, `dbtool.py` use SQLite's backup API on the database file only; the secrets directory is never read.
+- `docker-compose.yml`: one `app` service, named volumes `coffee_data` (`/data`) and `secrets` (`/secrets`, mode 0700, owned by the app user, mounted nowhere else), bind mount `./backups`.
+- `scripts/smoke.sh` is the HTTP smoke test against a running instance.
 
 ## Conventions
 
-- Money: integer cents only; format/parse via `app/money.py`. UUID primary keys (`sqlalchemy.Uuid`).
-- All user-facing text through `t("key")`; add keys only to your own strings module.
-- Tests run against a temp-file SQLite DB created by Alembic (never `:memory:`, never `create_all`). Run from the repo/worktree root: `/home/claude/venv/bin/python -m pytest -q`.
+- Tests run against a temp-file SQLite database created by Alembic (never `:memory:`, never `create_all`). Mail logic tests use the `memory` backend; protocol tests use a local `aiosmtpd` server with generated certificates. The test configuration uses cheap Argon2 parameters.
 - No CDN or external assets. No inline JS/CSS (strict CSP).
+- Run the suite from the repository root: `python -m pytest -q`; the Playwright test (`tests/test_e2e_scan.py`) needs Chromium and is skipped when no browser can be launched.

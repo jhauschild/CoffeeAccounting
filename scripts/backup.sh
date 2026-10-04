@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Consistent online backup of the SQLite database (safe while the app is running).
 #
+# The backup contains ONLY the SQLite database. SECRETS_DIR (the encrypted mail login) is never read,
+# copied or archived by this script, and the compose file does not mount the secrets volume into /backups.
+# After restoring onto a new server run `python -m app.cli setup-mail` again.
+#
 #   scripts/backup.sh [BACKUP_DIR]
 #
 # Environment: DB_PATH or DATABASE_URL (the container sets DATABASE_URL), BACKUP_DIR (default ./backups,
