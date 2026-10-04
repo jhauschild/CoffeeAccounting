@@ -2,12 +2,17 @@
 
 Authorization is enforced server-side by dependencies, never by hidden UI:
 
-* `live_admin_session`  any live admin session (also a pending, second-factor-less one)
-* `pending_admin`       a live session that is *not* complete (needs TOTP or enrollment)
-* `require_admin`       a complete session (password + TOTP when required); yields `AdminContext`
+* `live_admin_session`  any live admin session (logout and the TOTP enrolment pages use this)
+* `require_admin`       a live session whose admin has finished the one-time TOTP enrolment when
+                        `BALANCE_TOTP_REQUIRED` demands it (otherwise redirect to the enrolment);
+                        yields `AdminContext`
 * `require_global_admin` complete session of a global administrator
 * `admin_user_access`   `require_admin` + the `{user_id}` path parameter must be in scope
 * `require_admin_csrf`  every state-changing admin form must carry the session-bound token
+* `require_stepup`      the confirm POST of a balance-changing action: signed payload, one-time nonce
+                        and an open step-up window or a fresh TOTP/recovery code (app/services/stepup.py);
+                        yields the `StepupGrant` that `stepup.run` needs. The only route that
+                        executes balance changes (`POST /admin/stepup/confirm`) declares it.
 
 Normal-user sessions use another cookie (`coffee_session`, path `/`) and are never consulted here.
 The test `tests/test_admin_routes_authz.py` enumerates every `/admin` route and checks that each
@@ -22,23 +27,26 @@ from dataclasses import dataclass
 
 from fastapi import Depends, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.routing import APIRoute
 from sqlalchemy.exc import OperationalError
 from starlette.responses import RedirectResponse, Response
 
 from app.config import get_settings
 from app.db import read_session, write_session
 from app.models import AdminSession, AdminUser
-from app.services import admin_auth, authz
+from app.services import admin_auth, authz, stepup
 from app.services.errors import Forbidden, NotFound, ServiceError
 from app.strings import has, t
 from app.timeutil import format_local
 from app.web import templating, tokens
-from app.web.deps import Redirect, parse_uuid, verify_csrf_form
+from app.web.deps import Redirect, client_ip, parse_uuid, verify_csrf_form
+from app.web.middleware import no_store
 
 log = logging.getLogger(__name__)
 
 LOGIN_CSRF_COOKIE = "coffee_admin_login"
 LOGIN_PATH = "/admin/login"
+ENROL_PATH = "/admin/totp/setup"
 _UNSET = object()
 
 # Jinja helpers for the admin templates (the environment is shared with the other templates).
@@ -93,17 +101,10 @@ def live_admin_session(request: Request) -> tuple[AdminSession, AdminUser]:
     return pair
 
 
-def pending_admin(request: Request) -> tuple[AdminSession, AdminUser]:
-    session, admin = live_admin_session(request)
-    if admin_auth.is_complete(session, admin):
-        raise Redirect("/admin")
-    return session, admin
-
-
 def require_admin(request: Request) -> AdminContext:
     session, admin = live_admin_session(request)
-    if not admin_auth.is_complete(session, admin):
-        raise Redirect(LOGIN_PATH)
+    if admin_auth.enrolment_required(admin):
+        raise Redirect(ENROL_PATH)
     return AdminContext(session, admin)
 
 
@@ -132,7 +133,7 @@ def global_user_access(user_id: str, ctx: AdminContext = Depends(require_global_
 
 
 async def require_admin_csrf(request: Request) -> None:
-    """CSRF check for admin POSTs, bound to the admin session (pending sessions included)."""
+    """CSRF check for admin POSTs, bound to the admin session."""
     pair = await run_in_threadpool(live_admin_session, request)
     await verify_csrf_form(request, "admin", pair[0].csrf_secret)
 
@@ -190,3 +191,89 @@ def error_key(exc: ServiceError) -> str:
     if isinstance(exc, Forbidden):
         raise exc
     return exc.code if has(f"admin.err.{exc.code}") else "error"
+
+
+# ----- step-up (balance-changing actions) -------------------------------------------------------
+class StepupResponse(Exception):
+    """Raised by `require_stepup` to answer with a page (confirm page with code prompt, error page)
+    instead of running the route; `StepupRoute` turns it into the response."""
+
+    def __init__(self, response: Response):
+        super().__init__("step-up response")
+        self.response = response
+
+
+class StepupRoute(APIRoute):
+    """Route class for routers that use `require_stepup`: dependencies cannot return a response, so a
+    `StepupResponse` raised from one is converted here."""
+
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await original(request)
+            except StepupResponse as exc:
+                return exc.response
+
+        return handler
+
+
+def confirm_page(request: Request, ctx: AdminContext, view: stepup.ConfirmView, token: str, nonce: str, *,
+                 needs_code: bool, error: str | None = None, status_code: int = 200) -> Response:
+    """The read-only confirm page: what will be booked, the signed payload and nonce, and (only if the
+    step-up window is closed) the code field. Reused by every step-up action."""
+    return no_store(page(request, ctx, "admin/confirm.html",
+                         {"view": view, "payload": token, "nonce": nonce, "needs_code": needs_code, "error": error},
+                         status_code=status_code))
+
+
+def needs_code(session: AdminSession) -> bool:
+    """Would a confirm POST right now ask for a code (window closed and BALANCE_TOTP_REQUIRED on)?"""
+    if not get_settings().balance_totp_required:
+        return False
+    with read_session() as db:
+        fresh = db.get(AdminSession, session.id)
+        return fresh is None or not admin_auth.has_open_stepup(fresh)
+
+
+def preview(request: Request, ctx: AdminContext, kind: str, raw: dict, *, error_path: str):
+    """Entry-form POST of a step-up action: render the confirm page, or go back to `error_path` with the
+    flash key of the `ServiceError` the real action would raise. Writes nothing."""
+    try:
+        prepared = stepup.prepare(admin=ctx.admin, session_id=ctx.session.id, kind=kind, raw=raw,
+                                  ip=client_ip(request))
+    except ServiceError as exc:
+        return back(error_path, err=error_key(exc))
+    return confirm_page(request, ctx, prepared.view, prepared.token, prepared.nonce,
+                        needs_code=needs_code(ctx.session))
+
+
+async def require_stepup(request: Request, ctx: AdminContext = Depends(require_admin)) -> stepup.StepupGrant:
+    """Dependency of every balance-changing POST (see module docstring and `app/services/stepup.py`).
+
+    Reads `payload`, `nonce` and `code` from the form. Without a valid signed payload for this admin and
+    session, an unspent nonce, and an open step-up window (or a correct fresh code) nothing is executed:
+    the route body is never reached. Pair it with `require_admin_csrf` and `StepupRoute`.
+    """
+    form = await request.form()
+    ip = client_ip(request)
+    try:
+        return await run_in_threadpool(
+            stepup.authorise, admin=ctx.admin, session=ctx.session, token=form.get("payload"),
+            nonce=form.get("nonce"), code=form.get("code"), ip=ip)
+    except stepup.PayloadInvalid:
+        raise StepupResponse(no_store(page(request, ctx, "admin/stepup_invalid.html", status_code=400))) from None
+    except stepup.AlreadyExecuted as exc:
+        raise StepupResponse(back(exc.back_path, msg="already_executed")) from None
+    except stepup.SessionGone:
+        raise Redirect(LOGIN_PATH) from None
+    except stepup.CodeRequired as exc:
+        try:
+            view = await run_in_threadpool(stepup.view_for, admin=ctx.admin, payload=exc.payload, ip=ip)
+        except ServiceError as err:
+            raise StepupResponse(back(stepup.REGISTRY[exc.payload.kind].back_path(exc.payload.params),
+                                      err=error_key(err))) from None
+        status = {"code_required": 200, "invalid_code": 401, "rate_limited": 429}[exc.error or "code_required"]
+        raise StepupResponse(confirm_page(request, ctx, view, form.get("payload"), exc.payload.nonce,
+                                          needs_code=True, error=exc.error, status_code=status)) from None

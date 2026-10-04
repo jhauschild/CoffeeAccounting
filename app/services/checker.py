@@ -7,12 +7,25 @@ bypassed them (e.g. rows edited with foreign keys or triggers disabled).
 from __future__ import annotations
 
 import bisect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import COFFEE_QUANTITY, EVENT_TYPES, USER_STATUSES, Chair, ConsumptionEvent, PaymentEvent, Price, User
+from app.models import (
+    COFFEE_QUANTITY,
+    EVENT_TYPES,
+    PAYMENT_KINDS,
+    USER_STATUSES,
+    AdminUser,
+    Chair,
+    ConsumptionEvent,
+    GroupRemittance,
+    PaymentEvent,
+    Price,
+    User,
+)
+from app.services import groups
 
 
 @dataclass(frozen=True)
@@ -28,6 +41,8 @@ class CheckReport:
     payment_events: int
     users: int
     prices: int
+    remittances: int = 0
+    notes: list[str] = field(default_factory=list)  # informational, never a failure
 
     @property
     def ok(self) -> bool:
@@ -177,4 +192,112 @@ def check_ledger(db: Session) -> CheckReport:
         if n > 1:
             bad("double_correction", f"payment {pid} is corrected {n} times")
 
-    return CheckReport(problems, len(events), len(payments), len(users), len(prices))
+    # collectors and kinds (v2)
+    admins = {a.id: a for a in db.scalars(select(AdminUser))}
+    for p in payments:
+        ref = f"payment event {p.id}"
+        if p.kind not in PAYMENT_KINDS:
+            bad("payment_kind", f"{ref} has invalid kind {p.kind!r}")
+        elif p.kind == "cash" and p.collector_admin_id is None:
+            bad("cash_without_collector", f"{ref} is a cash payment without collector")
+        elif p.kind == "bookkeeping" and p.collector_admin_id is not None:
+            bad("bookkeeping_with_collector", f"{ref} is a bookkeeping payment with a collector")
+        if p.collector_admin_id is not None and p.collector_admin_id not in admins:
+            bad("orphan_collector", f"{ref} references missing collector {p.collector_admin_id}")
+        if p.correction_of_id in payment_by_id:
+            target = payment_by_id[p.correction_of_id]
+            if p.collector_admin_id != target.collector_admin_id:
+                bad("correction_collector", f"{ref} has a different collector than corrected payment {target.id}")
+            if p.kind != target.kind:
+                bad("correction_kind", f"{ref} has a different kind than corrected payment {target.id}")
+            if p.chair_id != target.chair_id:
+                bad("correction_chair", f"{ref} has a different chair than corrected payment {target.id}")
+            if (p.amount_cents > 0) == (target.amount_cents > 0):
+                bad("correction_sign", f"{ref} has the same sign as corrected payment {target.id}")
+            if abs(p.amount_cents) > abs(target.amount_cents):
+                bad("correction_amount", f"{ref} exceeds corrected payment {target.id}")
+            recorder = admins.get(p.admin_id)
+            if p.admin_id != target.collector_admin_id and (recorder is None or recorder.role != "global"):
+                bad("correction_recorder",
+                    f"{ref} was recorded by neither the collector nor a head admin of payment {target.id}")
+
+    # group remittances (v2)
+    remittances = list(db.scalars(select(GroupRemittance)))
+    rem_by_id = {r.id: r for r in remittances}
+    rem_corrections: dict = {}
+    for r in remittances:
+        ref = f"remittance {r.id}"
+        target_admin = admins.get(r.group_admin_id)
+        if target_admin is None:
+            bad("remittance_admin", f"{ref} references missing group admin {r.group_admin_id}")
+        elif target_admin.role != "chair":
+            bad("remittance_admin_role", f"{ref} is for {target_admin.username}, who is not a group admin")
+        recorder = admins.get(r.recorded_by_admin_id)
+        if recorder is None or recorder.role != "global":
+            bad("remittance_recorder", f"{ref} was not recorded by a head admin")
+        if r.chair_id not in chairs:
+            bad("orphan_chair", f"{ref} references missing chair {r.chair_id}")
+        if r.amount_cents == 0:
+            bad("zero_remittance", f"{ref} has amount 0")
+        if r.correction_of_id is not None:
+            rem_corrections[r.correction_of_id] = rem_corrections.get(r.correction_of_id, 0) + 1
+            orig = rem_by_id.get(r.correction_of_id)
+            if orig is None:
+                bad("remittance_correction_orphan", f"{ref} corrects missing remittance {r.correction_of_id}")
+            elif orig.id == r.id:
+                bad("remittance_correction_self", f"{ref} corrects itself")
+            else:
+                if orig.group_admin_id != r.group_admin_id:
+                    bad("remittance_correction_admin", f"{ref} corrects a remittance of another group admin")
+                if orig.correction_of_id is not None:
+                    bad("remittance_correction_of_correction", f"{ref} corrects another correction {orig.id}")
+    for rid, n in rem_corrections.items():
+        if n > 1:
+            bad("double_remittance_correction", f"remittance {rid} is corrected {n} times")
+
+    # group balance consistency: recompute from plain rows, compare with the service functions
+    admin_collected: dict = {}
+    chair_collected: dict = {}
+    for p in payments:
+        if p.kind == "cash" and p.collector_admin_id is not None:
+            admin_collected[p.collector_admin_id] = admin_collected.get(p.collector_admin_id, 0) + p.amount_cents
+            collector = admins.get(p.collector_admin_id)
+            if collector is not None and collector.role == "chair":
+                chair_collected[p.chair_id] = chair_collected.get(p.chair_id, 0) + p.amount_cents
+    admin_remitted: dict = {}
+    chair_remitted: dict = {}
+    for r in remittances:
+        admin_remitted[r.group_admin_id] = admin_remitted.get(r.group_admin_id, 0) + r.amount_cents
+        holder = admins.get(r.group_admin_id)
+        if holder is not None and holder.role == "chair":
+            chair_remitted[r.chair_id] = chair_remitted.get(r.chair_id, 0) + r.amount_cents
+    notes: list[str] = []
+    for admin in admins.values():
+        if admin.role != "chair":
+            continue
+        want_c, want_r = admin_collected.get(admin.id, 0), admin_remitted.get(admin.id, 0)
+        got_c, got_h = groups.collected(db, admin.id), groups.held(db, admin.id)
+        if got_c != want_c or got_h != want_c - want_r:
+            bad("group_balance_mismatch",
+                f"group admin {admin.username}: collected {got_c} / held {got_h}, rows say {want_c} / {want_c - want_r}")
+        if want_c - want_r < 0:
+            notes.append(f"group admin {admin.username} has handed over {-(want_c - want_r)} cents more than collected")
+        elif not admin.active and want_c - want_r != 0:
+            notes.append(f"former group admin {admin.username} still holds {want_c - want_r} cents")
+    rollup = {row.chair_id: row for row in groups.chair_rollup(db)}
+    for cid in set(chair_collected) | set(chair_remitted) | set(rollup):
+        want_c, want_r = chair_collected.get(cid, 0), chair_remitted.get(cid, 0)
+        row = rollup.get(cid)
+        got_c = row.collected_cents if row else 0
+        got_h = row.held_cents if row else 0
+        if got_c != want_c or got_h != want_c - want_r:
+            bad("group_balance_mismatch",
+                f"chair {cid}: roll-up collected {got_c} / held {got_h}, rows say {want_c} / {want_c - want_r}")
+        if want_c - want_r < 0:
+            notes.append(f"chair {cid} has handed over {-(want_c - want_r)} cents more than collected")
+
+    for o in groups.over_credit_paybacks(db):
+        notes.append(f"paid-back cash payment {o.payment_id} by {o.collector_name} of {o.amount_cents} cents "
+                     f"exceeded the person's credit of {o.credit_cents} cents at the time")
+
+    return CheckReport(problems, len(events), len(payments), len(users), len(prices), len(remittances), notes)

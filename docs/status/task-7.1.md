@@ -1,0 +1,16 @@
+# Task 7.1: Playwright e2e tests for v2
+
+Status: done. Full suite: 1853 passed, 4 skipped (OpenCV decode), 0 failed (baseline 1844 incl. the one old e2e test; e2e files now hold 10 tests).
+
+## What changed
+- `tests/e2e_support.py` (new): `browser` (module-scoped headless Chromium; skips the module with the reason if Playwright or the browser cannot start), `live` (function-scoped uvicorn thread on a free port, migrated temp SQLite DB copied from the session template, `MAIL_BACKEND=file` + `MAIL_FILE_DIR` in tmp, `BALANCE_TOTP_REQUIRED=true`, cheap Argon2 from TEST_ENV, development environment; seeded with chair "E2E", price 50 cents, head admin `boss` created through `admin_auth.create_admin` + `begin_enrollment`, TOTP enabled), `new_page` (each call = a new browser context = "another browser"), `Mailbox` (reads `.eml` files, `wait_new(to, since)` polls the directory, `Mail.link("/verify/")`), `Live.make_member/make_guest/make_chair/add_coffees/user/count/session`, helpers `sign_in`, `admin_sign_in`, `register_member`, `dd_for`, `totp_now`.
+- `tests/test_e2e_scan.py` (rewritten, 4 tests): the old scan test migrated (anonymous scan -> /login -> sign in -> pending double recorded -> refresh -> rescan, pending row consumed); signed-in scan (Outstanding wording, Shots this month 1 then 2, refresh and rescan, undo); pending coffee dropped when the verify link is opened in another browser; recorded when opened in the same browser.
+- `tests/test_e2e_accounts.py` (4): member registration by mail link (GET writes nothing, confirm signs in, link single use); guest registration with sponsor approval in a clean context (no session cookie), guest cannot sign in before approval; forgot password by username for a member (old password refused, new works, old browser session signed out); guest forgot password mail goes to the sponsor.
+- `tests/test_e2e_site_admin.py` (2): open site (anonymous redirect, login lands on /overview, people list, accent-folding search "muller" -> "Müller", person/chairs/prices pages, page HTML never contains any member's e-mail or username); admin flow (head admin payment with TOTP code once, second payment in the window without code, entry step writes nothing, member sees "Credit: €4.50", role button, group admin signs in at /admin/login with account username + password, enrols TOTP at first login, cash payment for a member of the own chair needs no code, head admin remittance on /admin/groups lowers held 3.00 -> 1.00, open-site chairs page equals the admin groups page for held, collected, handed over).
+
+## Notes for later tasks
+- Fixtures are imported by name from `tests.e2e_support` (no conftest change). The `browser` fixture is module-scoped on purpose: a started sync Playwright leaves a running event loop in the thread, which must not leak into unrelated modules.
+- Each test gets its own server and DB (about 1 s setup); TOTP codes come from the real secret (head admin: seeded; group admin: read from the enrolment page).
+- Account page labels: "Display name" (account), "Name" (verify/approve pages); `dd_for` matches the `<dt>` text exactly.
+- Timings (3 runs of all e2e files, 10 tests): 22.8 s, 22.5 s, 22.4 s; slowest test (admin flow) about 5 s, others under 2.1 s.
+- No app code or other tests were touched. Known-broken: none.

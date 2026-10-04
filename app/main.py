@@ -22,7 +22,8 @@ from starlette.responses import PlainTextResponse, Response
 from app.config import Settings, get_settings
 from app.services.errors import ServiceError
 from app.strings import has, t
-from app.web import health, routes_admin, routes_user
+from app.web import health, routes_admin, routes_overview, routes_user
+from app.web.accesslog import AccessLogMiddleware, redact_path
 from app.web.deps import CSRFError, Redirect
 from app.web.middleware import SecurityMiddleware
 from app.web.templating import ROOT, render
@@ -86,7 +87,7 @@ def _install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unexpected(request: Request, exc: Exception) -> Response:
-        log.error("unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+        log.error("unhandled error on %s %s", request.method, redact_path(request.url.path), exc_info=exc)
         return error_page(request, 500, "error.internal")
 
 
@@ -102,6 +103,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     _configure_logging(settings.log_level)
     production = settings.is_production
+    if production and not settings.trusted_proxies:
+        log.warning("TRUSTED_PROXY_IPS is empty: X-Forwarded-For is ignored and the client address is the connecting "
+                    "peer. Behind a reverse proxy (the documented setup) every visitor then shares the proxy's "
+                    "address, so ONE rate-limit bucket: 20 failed sign-ins lock out every visitor for 15 minutes. "
+                    "Set TRUSTED_PROXY_IPS to the proxy's address or network (README, \"Trusted proxy addresses\"). "
+                    "Leave it empty only when no proxy sits in front of the app.")
     app = FastAPI(
         title=settings.app_title,
         debug=False,
@@ -110,9 +117,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None if production else "/openapi.json",
     )
     app.add_middleware(SecurityMiddleware, public_base_url=settings.public_base_url, production=production)
+    app.add_middleware(AccessLogMiddleware)  # outermost: sees the final status; never logs token paths
     app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
     app.include_router(health.router)
     app.include_router(routes_user.router)
+    app.include_router(routes_overview.router)
     app.include_router(routes_admin.router)
     _install_error_handlers(app)
     return app

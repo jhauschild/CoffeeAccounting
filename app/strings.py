@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import string
 
-from app import strings_admin, strings_common, strings_user
+from app import strings_admin, strings_common, strings_mail, strings_site, strings_user
 from app.config import get_settings
 
 DEFAULT_LANG = "en"
@@ -31,7 +31,7 @@ def _merge(*modules) -> dict[str, str]:
     return merged
 
 
-CATALOGS: dict[str, dict[str, str]] = {DEFAULT_LANG: _merge(strings_common, strings_user, strings_admin)}
+CATALOGS: dict[str, dict[str, str]] = {DEFAULT_LANG: _merge(strings_common, strings_user, strings_admin, strings_mail, strings_site)}
 
 
 class _Defaults(dict):

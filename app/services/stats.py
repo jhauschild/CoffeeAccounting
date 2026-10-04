@@ -26,7 +26,7 @@ from app.models import (
     User,
     effective_users,
 )
-from app.services import authz, ledger, sessions
+from app.services import authz, groups, ledger, mail_status, sessions
 from app.services.ledger import Totals
 from app.services.prices import get_price_in_effect, list_prices
 from app.services.users import _escape_like, _fold, _fold_sql, effective_user_id, member_ids_select, normalize_name
@@ -189,7 +189,7 @@ def _recent_payments(db: Session, visible, limit: int) -> list[EventRow]:
         .where(*_where(_scope_user_ids(visible, pe.user_id)))
         .order_by(pe.created_at.desc(), pe.id).limit(limit))
     return [EventRow(p.id, p.created_at, p.user_id, name, chair,
-                     "correction" if p.correction_of_id else "payment", None, p.amount_cents, p.note)
+                     "correction" if p.correction_of_id else ("bookkeeping" if p.kind == "bookkeeping" else "payment"), None, p.amount_cents, p.note)
             for p, name, chair in rows]
 
 
@@ -209,6 +209,20 @@ def dashboard(db: Session, admin: AdminUser, now: datetime | None = None) -> Das
         recent_consumption=_recent_consumption(db, visible, RECENT_LIMIT),
         recent_payments=_recent_payments(db, visible, RECENT_LIMIT),
     )
+
+
+@dataclass(frozen=True)
+class HeadTiles:
+    """Dashboard additions only the head admin sees: money held by group admins and the mail status."""
+
+    held_by_groups_cents: int
+    mail: mail_status.MailCard
+
+
+def head_tiles(db: Session, admin: AdminUser) -> HeadTiles:
+    authz.require_global(admin)
+    held = sum(row.held_cents for row in groups.list_group_balances(db))
+    return HeadTiles(held_by_groups_cents=held, mail=mail_status.card(db))
 
 
 # ----- user table -----------------------------------------------------------------------------
@@ -325,6 +339,7 @@ class PaymentRow:
     chair_short: str
     admin_name: str | None
     corrected: bool
+    collector_name: str | None = None  # group admin / admin who collected the cash (admin-only view)
 
 
 @dataclass(frozen=True)
@@ -355,7 +370,12 @@ def _admin_names(db: Session, ids) -> dict[str, str]:
     ids = {uuid.UUID(str(i)) for i in ids if i}
     if not ids:
         return {}
-    return {str(a.id): a.username for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(ids)))}
+    return {str(a.id): authz.admin_label(a) for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(ids)))}
+
+
+def _collector_names(db: Session, ids) -> dict[str, str]:
+    """Collector shown to admins: the linked member's name for a group admin, else the admin username."""
+    return _admin_names(db, ids)
 
 
 def _details(meta: dict | None) -> str:
@@ -387,6 +407,7 @@ def user_detail(db: Session, admin: AdminUser, user_id: uuid.UUID) -> UserDetail
         PaymentEvent.correction_of_id.in_([p.id for p in payments])))) if payments else set()
     chairs = {c.id: c.short_name for c in db.scalars(select(Chair))}
     names = _admin_names(db, [e.admin_id for e in consumption] + [p.admin_id for p in payments])
+    collectors = _collector_names(db, [p.collector_admin_id for p in payments])
 
     entries = db.scalars(
         select(AuditLog).where(or_(
@@ -398,9 +419,11 @@ def user_detail(db: Session, admin: AdminUser, user_id: uuid.UUID) -> UserDetail
         user=user,
         totals=ledger.get_totals(db, user_id),
         consumption=[ConsumptionRow(e, chairs.get(e.chair_id, "?"), names.get(str(e.admin_id)) if e.admin_id else None,
-                                    e.id in reversed_set, e.type != "reversal" and e.id not in reversed_set)
+                                    e.id in reversed_set,
+                                    e.type != "reversal" and e.quantity > 0 and e.id not in reversed_set)
                      for e in consumption],
-        payments=[PaymentRow(p, chairs.get(p.chair_id, "?"), names.get(str(p.admin_id)), p.id in corrected)
+        payments=[PaymentRow(p, chairs.get(p.chair_id, "?"), names.get(str(p.admin_id)), p.id in corrected,
+                              collectors.get(str(p.collector_admin_id)) if p.collector_admin_id else None)
                   for p in payments],
         audit=audit_rows(db, entries),
         active_sessions=sessions.active_session_count(db, user_id),

@@ -1,0 +1,9 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.stepup.invalid_title") }}{% endblock %}
+{% block admin_content %}
+<section class="card narrow">
+  <h1>{{ t("admin.stepup.invalid_title") }}</h1>
+  <p class="notice notice-error card" role="alert">{{ t("admin.stepup.invalid") }}</p>
+  <p><a class="button button-secondary" href="/admin/users">{{ t("admin.users.title") }}</a></p>
+</section>
+{% endblock %}

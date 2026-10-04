@@ -1,4 +1,4 @@
-"""Admin login (password + TOTP), enrollment, logout, own account (owner: admin agent)."""
+"""Admin login (password), one-time TOTP enrolment, logout, own account (owner: admin agent)."""
 
 from __future__ import annotations
 
@@ -27,18 +27,10 @@ def _login_page(request: Request, *, error: str | None = None, status_code: int 
     return response
 
 
-def _next_url(stage: str) -> str:
-    return {"totp": "/admin/totp", "enroll": "/admin/totp/setup"}.get(stage, "/admin")
-
-
 @router.get("/login")
 def login_form(request: Request):
-    pair = ad._resolve(request)
-    if pair is not None:
-        session, admin = pair
-        if admin_auth.is_complete(session, admin):
-            raise Redirect("/admin")
-        raise Redirect("/admin/totp" if admin.totp_enabled else "/admin/totp/setup")
+    if ad._resolve(request) is not None:
+        raise Redirect("/admin")
     return _login_page(request)
 
 
@@ -46,49 +38,21 @@ def login_form(request: Request):
 def login_submit(request: Request, username: str = Form("", max_length=200), password: str = Form("", max_length=1000)):
     ip = client_ip(request)
     # start_login manages its own short write transactions (Argon2 runs outside the write lock);
-    # failures are committed (rate-limit hit + audit) before the error page.
+    # failures are committed (rate-limit hit + audit) before the error page. A correct password
+    # yields the full session at once; an admin who still has to enrol TOTP is redirected by
+    # `require_admin` from /admin to the enrolment page.
     outcome = admin_auth.start_login(username=username, password=password, ip=ip,
                                      old_raw_token=request.cookies.get(admin_auth.ADMIN_COOKIE))
     if outcome.status == "limited":
         return _login_page(request, error="rate_limited", status_code=429, username=username)
     if outcome.status != "ok":
         return _login_page(request, error="invalid_login", status_code=401, username=username)
-    response = RedirectResponse(_next_url(outcome.stage), status_code=303)
-    ad.set_admin_cookie(response, outcome.raw_token, ad.session_max_age(outcome.session))
-    return no_store(response)
-
-
-# ----- second factor ----------------------------------------------------------------------------
-@router.get("/totp")
-def totp_form(request: Request, pair=Depends(ad.pending_admin)):
-    session, admin = pair
-    if not admin.totp_enabled:
-        raise Redirect("/admin/totp/setup")
-    return ad.templating.render(request, "admin/totp.html", {"csrf_token": ad.tokens.csrf_token("admin", session.csrf_secret),
-                                                              "error": None, "admin": admin, "is_global": False})
-
-
-@router.post("/totp", dependencies=[Depends(ad.require_admin_csrf)])
-def totp_submit(request: Request, code: str = Form("", max_length=64), pair=Depends(ad.pending_admin)):
-    session, admin = pair
-    if not admin.totp_enabled:
-        raise Redirect("/admin/totp/setup")
-    with write_session() as db:
-        outcome = admin_auth.verify_second_factor(db, session=session, admin=admin, code=code,
-                                                  ip=client_ip(request))
-        db.expunge_all()
-    if outcome.status != "ok":
-        limited = outcome.status == "limited"
-        return ad.templating.render(
-            request, "admin/totp.html",
-            {"csrf_token": ad.tokens.csrf_token("admin", session.csrf_secret),
-             "error": "rate_limited" if limited else "invalid_code", "admin": admin, "is_global": False},
-            status_code=429 if limited else 401)
     response = RedirectResponse("/admin", status_code=303)
     ad.set_admin_cookie(response, outcome.raw_token, ad.session_max_age(outcome.session))
     return no_store(response)
 
 
+# ----- one-time TOTP enrolment -------------------------------------------------------------------
 @router.get("/totp/setup")
 def setup_form(request: Request, pair=Depends(ad.live_admin_session)):
     session, admin = pair
@@ -125,8 +89,6 @@ def setup_submit(request: Request, code: str = Form("", max_length=64), pair=Dep
         request, "admin/recovery_codes.html",
         {"csrf_token": ad.tokens.csrf_token("admin", outcome.session.csrf_secret), "codes": outcome.recovery_codes,
          "admin": admin, "is_global": admin.role == "global", "show_nav": False})
-    if outcome.raw_token:
-        ad.set_admin_cookie(response, outcome.raw_token, ad.session_max_age(outcome.session))
     return no_store(response)
 
 
@@ -150,7 +112,8 @@ def account(request: Request, ctx: ad.AdminContext = Depends(ad.require_admin)):
         db.expunge_all()
     return ad.page(request, ctx, "admin/account.html",
                    {"sessions": sessions, "current_session_id": ctx.session.id,
-                    "min_password_length": admin_auth.MIN_PASSWORD_LENGTH})
+                    "min_password_length": (ad.get_settings().password_min_length if admin_auth.is_group_admin(ctx.admin)
+                                            else admin_auth.MIN_PASSWORD_LENGTH)})
 
 
 @router.post("/account/password", dependencies=[Depends(ad.require_admin_csrf)])
@@ -161,7 +124,7 @@ def change_password(request: Request, current_password: str = Form("", max_lengt
     if new_password != new_password2:
         return ad.back("/admin/account", err="password_mismatch")
     try:
-        admin_auth.validate_password(new_password)
+        admin_auth.check_new_password(ctx.admin, new_password)
     except InvalidInput:
         return ad.back("/admin/account", err="password_weak")
     with write_session() as db:

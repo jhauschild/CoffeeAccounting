@@ -43,9 +43,43 @@ class InvalidAmount(InvalidInput):
     code = "invalid_amount"
 
 
+class PaybackExceedsCredit(InvalidAmount):
+    """A group admin tried to pay back more than the person's current credit (head admins may)."""
+
+    code = "payback_exceeds_credit"
+
+
+class InvalidPassword(InvalidInput):
+    """Password policy violation. `context["reason"]` is one of too_short, too_long, equals_username,
+    equals_email_local; the message never contains the password."""
+
+    code = "invalid_password"
+
+
 class Conflict(ServiceError):
     code = "conflict"
 
 
+class NotReversible(Conflict):
+    """An event that cannot be reversed (a negative adjustment: its reversal would break the table check that
+    reversal rows have a negative quantity). The admin books the opposite adjustment instead."""
+
+    code = "not_reversible"
+
+
 class RateLimited(ServiceError):
     code = "rate_limited"
+
+
+class InvalidToken(ServiceError):
+    """A mailed one-time token (verification, approval, reset) is unknown, expired or already used.
+    One error for all three so the response never says which."""
+
+    code = "invalid_token"
+
+
+class InvalidCredentials(ServiceError):
+    """Sign-in failed. One error for an unknown username, a wrong password and an account that cannot sign in
+    (inactive, merged, unverified), so the response never says which."""
+
+    code = "invalid_credentials"

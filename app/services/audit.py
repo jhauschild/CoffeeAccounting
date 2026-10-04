@@ -10,7 +10,7 @@ from app.models import ACTOR_TYPES, AuditLog
 from app.timeutil import utcnow
 
 # Metadata keys that suggest a secret is being logged. Logging them is a programming error.
-_FORBIDDEN_KEY_PARTS = ("password", "secret", "token", "cookie", "access_code", "totp_code", "otp_code")
+_FORBIDDEN_KEY_PARTS = ("password", "secret", "token", "cookie", "totp_code", "otp_code")
 
 
 def _check_metadata(metadata: dict) -> None:
@@ -37,7 +37,7 @@ def log(
     """Add an audit entry to the caller's transaction (never commits).
 
     `actor_id`/`target_id` may be UUIDs or strings. `metadata` must be JSON-serialisable
-    and must not contain secrets (passwords, TOTP secrets/codes, tokens, the access code,
+    and must not contain secrets (passwords, TOTP secrets/codes, tokens,
     cookies); keys that look like secrets raise `ValueError`.
     """
     if actor_type not in ACTOR_TYPES:

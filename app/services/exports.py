@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import AdminUser, Chair, ConsumptionEvent, PaymentEvent, User
 from app.money import format_amount
-from app.services import audit, stats
+from app.services import audit, authz, groups, stats
 from app.strings import t
 from app.timeutil import format_local, utcnow
 
@@ -115,7 +115,8 @@ def ledger_csv(
     pays = db.execute(scoped(pe, select(pe, User.display_name, Chair.short_name)
                              .join(User, User.id == pe.user_id).join(Chair, Chair.id == pe.chair_id))).all()
     admin_ids = {e.admin_id for e, _, _ in cons if e.admin_id} | {p.admin_id for p, _, _ in pays}
-    names = {a.id: a.username for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(admin_ids)))} if admin_ids else {}
+    names = ({a.id: authz.admin_label(a) for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(admin_ids)))}
+             if admin_ids else {})
 
     entries = []
     for e, name, chair in cons:
@@ -125,7 +126,7 @@ def ledger_csv(
             csv_text(names.get(e.admin_id, "")), str(e.id)]))
     for p, name, chair in pays:
         entries.append((p.created_at, str(p.id), [
-            _local(p.created_at), csv_text("correction" if p.correction_of_id else "payment"), csv_text(name),
+            _local(p.created_at), csv_text("correction" if p.correction_of_id else ("bookkeeping" if p.kind == "bookkeeping" else "payment")), csv_text(name),
             csv_text(chair), "", "", _money(p.amount_cents), csv_text(p.note), csv_text(names.get(p.admin_id, "")),
             str(p.id)]))
     entries.sort(key=lambda x: (x[0], x[1]))
@@ -138,15 +139,44 @@ def ledger_csv(
     return _render(header, [row for _, _, row in entries])
 
 
+def group_balances_csv(db: Session, admin: AdminUser, *, ip: str | None = None) -> bytes:
+    """Group balances per group admin (current and former) and per chair roll-up, signed amounts.
+    Head admin only (`Forbidden`); audited (`export.group_balances_csv`)."""
+    authz.require_global(admin)
+    balances = groups.list_group_balances(db)
+    rollup = groups.chair_rollup(db)
+    header = [t(f"admin.csv.{k}") for k in ("row_kind", "group_admin", "chair", "collected", "handed_over",
+                                            "held", "flag")]
+    rows = []
+    for b in balances:
+        flags = ([] if b.is_current else [t("admin.csv.flag_former")]) + \
+                ([t("admin.csv.flag_negative")] if b.negative else [])
+        rows.append([csv_text(t("admin.csv.kind_admin")), csv_text(b.display_name or b.username),
+                     csv_text(b.chair_short_name or ""), _money(b.collected_cents), _money(b.remitted_cents),
+                     _money(b.held_cents), csv_text("; ".join(flags))])
+    for c in rollup:
+        rows.append([csv_text(t("admin.csv.kind_chair")), "", csv_text(c.chair_short_name),
+                     _money(c.collected_cents), _money(c.remitted_cents), _money(c.held_cents),
+                     csv_text(t("admin.csv.flag_negative") if c.negative else "")])
+    audit.log(db, actor_type="admin", actor_id=admin.id, action="export.group_balances_csv", target_type="export",
+              metadata={"rows": len(rows)}, ip=ip)
+    return _render(header, rows)
+
+
 def csv_filename(kind: str, now: datetime | None = None) -> str:
     return f"coffee-{kind}-{format_local(now or utcnow(), '%Y%m%d-%H%M')}.csv"
 
 
 # ----- QR codes -------------------------------------------------------------------------------
+# kind -> path; the four permanent codes (PLAN-v2 section 2). Order is the order on the page and in the CLI output.
+QR_PATHS = {"register": "/register", "single": "/coffee/single", "double": "/coffee/double", "website": "/overview"}
+QR_PRICE_KINDS = ("single", "double")  # only the shot codes show the price
+
+
 def qr_urls() -> dict[str, str]:
-    """The two canonical scan URLs (PROMPT §3); they are the only content of the QR codes."""
+    """The four permanent URLs; each is the only content of its QR code (never a token, code or personal data)."""
     base = get_settings().public_base_url
-    return {"single": f"{base}/coffee/single", "double": f"{base}/coffee/double"}
+    return {kind: f"{base}{path}" for kind, path in QR_PATHS.items()}
 
 
 def qr_svg(url: str, label: str | None, *, caption: str | None = None, standalone: bool = True) -> str:
@@ -195,7 +225,7 @@ def qr_svg(url: str, label: str | None, *, caption: str | None = None, standalon
 
 
 def write_qr_files(out_dir) -> list[str]:
-    """Write `single.svg` and `double.svg` into `out_dir` (CLI `qr --out DIR`); returns the file names."""
+    """Write `coffee-<kind>.svg` for the four codes into `out_dir` (CLI `qr --out DIR`); returns the file names."""
     from pathlib import Path
 
     directory = Path(out_dir)

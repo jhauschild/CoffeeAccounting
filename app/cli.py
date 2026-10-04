@@ -14,7 +14,8 @@ from datetime import timedelta
 from sqlalchemy import delete, or_
 
 from app.db import read_session, write_session
-from app.models import AdminSession, PendingAction, RateLimitEvent, UserSession
+from app.models import (AdminSession, PasswordResetToken, PendingAction, PendingRegistration, RateLimitEvent,
+                        UserSession)
 from app.money import format_money
 from app.services import audit
 from app.services.checker import check_ledger
@@ -35,9 +36,11 @@ def cmd_check_ledger(args) -> int:
                f"{report.users} users, {report.prices} prices checked")
     if report.ok:
         print(f"OK: {summary}")
-        return 0
-    print(f"FAILED: {len(report.problems)} problem(s); {summary}", file=sys.stderr)
-    return 1
+    else:
+        print(f"FAILED: {len(report.problems)} problem(s); {summary}", file=sys.stderr)
+    for note in report.notes:
+        print(f"NOTE {note}")
+    return 0 if report.ok else 1
 
 
 def cmd_set_price(args) -> int:
@@ -67,6 +70,10 @@ def cmd_purge_expired(args) -> int:
                 delete(model).where(or_(model.expires_at < now, model.revoked_at < now - REVOKED_SESSION_RETENTION))
             ).rowcount
         counts["pending_actions"] = db.execute(delete(PendingAction).where(PendingAction.expires_at < now)).rowcount
+        # Registration and reset links: expired ones are useless, consumed ones have done their job.
+        for name, model in (("pending_registrations", PendingRegistration), ("reset_links", PasswordResetToken)):
+            counts[name] = db.execute(
+                delete(model).where(or_(model.expires_at < now, model.consumed_at.is_not(None)))).rowcount
         counts["rate_limit_events"] = db.execute(
             delete(RateLimitEvent).where(RateLimitEvent.created_at < now - RATE_LIMIT_RETENTION)
         ).rowcount
@@ -88,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", help="optional note")
     p.set_defaults(func=cmd_set_price)
 
-    p = sub.add_parser("purge-expired", help="delete expired sessions, pending actions and old rate-limit rows")
+    p = sub.add_parser("purge-expired", help="delete expired sessions, pending actions, expired or used registration and reset links, old rate-limit rows")
     p.set_defaults(func=cmd_purge_expired)
 
     try:

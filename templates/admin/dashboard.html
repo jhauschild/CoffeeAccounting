@@ -1,8 +1,37 @@
 {% extends "admin/base.html" %}
-{% from "admin/_macros.html" import bal, period %}
+{% from "admin/_macros.html" import bal, held, period %}
 {% block admin_title %}{{ t("admin.dash.title") }}{% endblock %}
 {% block admin_content %}
 <h1>{{ t("admin.dash.title") }}</h1>
+{% if tiles %}
+{% set m = tiles.mail %}
+{% if m.banner == "not_configured" %}
+<p class="notice notice-error card" role="alert">{{ t("admin.mail.banner.unreadable" if m.unreadable else "admin.mail.banner.not_configured") }}</p>
+{% elif m.banner == "cap_reached" %}
+<p class="notice notice-warn card" role="alert">{{ t("admin.mail.banner.cap_reached", cap=m.max_per_hour) }}</p>
+{% elif m.banner == "failing" %}
+<p class="notice notice-error card" role="alert">{{ t("admin.mail.banner.failing", category=m.last_failure_category) }} {{ t("admin.mail.hint." ~ m.last_failure_category) }}</p>
+{% endif %}
+<div class="grid">
+<section class="card" aria-labelledby="mail-card-title">
+  <h2 id="mail-card-title">{{ t("admin.mail.title") }}</h2>
+  <dl class="totals facts">
+    <dt>{{ t("admin.mail.configured") }}</dt><dd>{{ t("admin.mail.yes") if m.configured else t("admin.mail.no") }}</dd>
+    {% if m.configured %}<dt>{{ t("admin.mail.user") }}</dt><dd>{{ m.masked_username }}</dd>{% endif %}
+    <dt>{{ t("admin.mail.backend") }}</dt><dd>{{ m.backend }}</dd>
+    <dt>{{ t("admin.mail.last_ok") }}</dt><dd>{% if m.last_ok_at %}{{ m.last_ok_at|local("%Y-%m-%d %H:%M") }}{% else %}{{ t("admin.mail.never") }}{% endif %}</dd>
+    <dt>{{ t("admin.mail.last_failure") }}</dt><dd>{% if m.last_failure_category %}{{ m.last_failure_category }}, {{ m.last_failure_at|local("%Y-%m-%d %H:%M") }}{% else %}{{ t("admin.mail.none") }}{% endif %}</dd>
+  </dl>
+  <p class="muted">{{ t("admin.mail.hint_setup") }}</p>
+</section>
+<section class="card" aria-labelledby="held-tile-title">
+  <h2 id="held-tile-title">{{ t("admin.dash.held") }}</h2>
+  <p class="big">{{ held(tiles.held_by_groups_cents) }}</p>
+  <p class="muted">{{ t("admin.dash.held_hint") }}</p>
+  <p><a class="button button-secondary" href="/admin/groups">{{ t("admin.dash.held_link") }}</a></p>
+</section>
+</div>
+{% endif %}
 <section class="card">
   <h2>{{ t("admin.dash.totals") }}</h2>
   <dl class="totals">

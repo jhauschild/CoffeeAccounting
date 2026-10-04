@@ -54,6 +54,8 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 1rem 0; }
   body.admin .container { max-width: none; padding: 0; }
   .qr-sheet { height: 48vh; padding: 0; margin: 0; page-break-inside: avoid; break-inside: avoid; display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .qr-sheet + .qr-sheet { page-break-before: auto; }
+  /* Two codes per page: sheets 3, 5, ... start a new page. */
+  .qr-sheet:nth-of-type(2n+1):not(:first-of-type) { page-break-before: always; break-before: page; }
   .qr-label { font-size: 4rem; color: #000; margin: 0; }
   .qr-code { max-width: 20vh; min-width: 14rem; }
   .qr-url, .qr-price, .qr-line { color: #000; }

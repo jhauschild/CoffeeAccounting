@@ -19,15 +19,30 @@ from tests.test_admin_routes_authz import POST_DATA, ROUTES, call, fill, princip
 from tests.user_support import scan_token
 
 USER_POSTS = {r.path for r in routes_user.router.routes if "POST" in r.methods}
-# /join carries no CSRF token on purpose (it only checks the shared code; login CSRF there gains nothing);
-# /coffee/{kind} is protected by the signed scan token plus the fetch-metadata/Origin check.
+# /coffee/{kind} is protected by the signed scan token plus the fetch-metadata/Origin check; every other user
+# POST needs a CSRF token bound to the user session, or (before sign-in) to the `coffee_csrf` cookie.
 USER_POST_DATA = {
     "/coffee/undo/{event_id}": {},
-    "/register": {"display_name": "Mallory", "chair_id": "{chair_id}", "privacy_ack": "1"},
-    "/profiles/select": {"user_id": "{user2_id}"},
+    "/login": {"username": "mallory", "password": "x"},
+    "/register": {"username": "mallory", "display_name": "Mallory", "chair_id": "{chair_id}",
+                  "email": "mallory@tum.de", "password": "a-long-enough-password",
+                  "password2": "a-long-enough-password", "privacy_ack": "1"},
+    "/register/guest": {"username": "mallory", "display_name": "Mallory", "sponsor_email": "alice@tum.de",
+                        "password": "a-long-enough-password", "password2": "a-long-enough-password",
+                        "privacy_ack": "1"},
+    "/verify/{token}": {},
+    "/forgot": {"username": "alice"},
+    "/reset/{token}": {"password": "a-long-enough-password", "password2": "a-long-enough-password"},
     "/account/edit": {"display_name": "Pwned", "chair_id": "{chair_id}"},
-    "/account/leave": {},
+    "/account/password": {"current_password": "x", "password": "a-long-enough-password",
+                          "password2": "a-long-enough-password"},
+    "/logout": {},
 }
+PRE_SESSION_POSTS = ["/login", "/register", "/register/guest", "/verify/{token}", "/forgot", "/reset/{token}"]
+
+
+def url(path: str, world: dict) -> str:
+    return fill(path, {**world, "token": "sometoken"})
 
 
 def snapshot(db_path) -> dict:
@@ -48,12 +63,12 @@ def snapshot(db_path) -> dict:
 
 
 def test_user_post_inventory_is_complete():
-    assert USER_POSTS == set(USER_POST_DATA) | {"/join", "/coffee/{kind}"}
+    assert USER_POSTS == set(USER_POST_DATA) | {"/coffee/{kind}"}
 
 
 @pytest.mark.parametrize("path", sorted(USER_POST_DATA))
 @pytest.mark.parametrize("token", ["missing", "foreign_session", "wrong_scope"])
-def test_user_posts_require_session_bound_csrf(path, token, client, db, world, login, gate_cookie, db_path):
+def test_user_posts_require_session_bound_csrf(path, token, client, db, world, login, db_path):
     other = factories.make_user(db, "Eve", db.get(Chair, world["chair_id"]))
     other_session = factories.make_session(db, other, raw_token="e" * 43)
     db.rollback()
@@ -62,15 +77,45 @@ def test_user_posts_require_session_bound_csrf(path, token, client, db, world, l
     if token == "foreign_session":  # the attacker's own valid token, bound to the attacker's session
         data["csrf_token"] = tokens.csrf_token("user", str(other_session.id))
     elif token == "wrong_scope":  # the admin-scoped MAC of the same key must not verify as a user token
-        data["csrf_token"] = tokens.csrf_token("admin", gate_cookie)
+        data["csrf_token"] = tokens.csrf_token("admin", "x")
     before = snapshot(db_path)
-    r = client.post(fill(path, world), data=data, follow_redirects=False)
+    r = client.post(url(path, world), data=data, follow_redirects=False)
     assert r.status_code == 403, (path, r.status_code)
     assert snapshot(db_path) == before
 
 
+@pytest.mark.parametrize("path", PRE_SESSION_POSTS)
+@pytest.mark.parametrize("mode", ["no_cookie_no_token", "no_cookie_forged_token", "token_of_another_cookie",
+                                  "cookie_without_token", "user_scope_token"])
+def test_pre_session_posts_require_the_cookie_bound_token(path, mode, client, db, world, db_path):
+    data = {k: fill(v, world) for k, v in USER_POST_DATA[path].items()}
+    if mode == "no_cookie_forged_token":
+        data["csrf_token"] = tokens.csrf_token("anon", "guess")
+    elif mode == "token_of_another_cookie":
+        client.cookies.set("coffee_csrf", "mine")
+        data["csrf_token"] = tokens.csrf_token("anon", "theirs")
+    elif mode == "cookie_without_token":
+        client.cookies.set("coffee_csrf", "mine")
+    elif mode == "user_scope_token":
+        client.cookies.set("coffee_csrf", "mine")
+        data["csrf_token"] = tokens.csrf_token("user", "mine")
+    before = snapshot(db_path)
+    r = client.post(url(path, world), data=data, follow_redirects=False)
+    assert r.status_code == 403, (path, mode, r.status_code)
+    assert snapshot(db_path) == before
+
+
+@pytest.mark.parametrize("path", PRE_SESSION_POSTS)
+def test_pre_session_posts_accept_the_matching_token(path, client, db, world):
+    client.cookies.set("coffee_csrf", "mine")
+    data = {k: fill(v, world) for k, v in USER_POST_DATA[path].items()}
+    data["csrf_token"] = tokens.csrf_token("anon", "mine")
+    r = client.post(url(path, world), data=data, follow_redirects=False)
+    assert r.status_code != 403, path
+
+
 def _all_posts():
-    users = [("user", p) for p in sorted(USER_POST_DATA)] + [("user", "/coffee/{kind}"), ("user", "/join")]
+    users = [("user", p) for p in sorted(USER_POST_DATA)] + [("user", "/coffee/{kind}")]
     admins = [("admin", p) for m, p, _ in ROUTES if m == "POST"]
     return users + admins
 
@@ -81,14 +126,14 @@ def _all_posts():
                                      {"Origin": "http://testserver.evil.example"}], ids=["origin", "null", "fetch", "suffix"])
 def test_cross_site_posts_rejected_on_every_route(area, path, headers, client, db, world, login, principals, db_path):
     login(db.get(User, world["user_id"]))
-    data = {"csrf_token": "irrelevant", "token": "x", "code": "test-access-code"}
+    data = {"csrf_token": "irrelevant", "token": "x"}
     before = snapshot(db_path)
     if area == "admin":
         c, csrf = principals["global"]
         data = {**{k: fill(v, world) for k, v in POST_DATA.get(path, {}).items()}, "csrf_token": csrf}
         r = c.post(fill(path, world), data=data, headers=headers, follow_redirects=False)
     else:
-        r = client.post(fill(path, world), data=data, headers=headers, follow_redirects=False)
+        r = client.post(url(path, world), data=data, headers=headers, follow_redirects=False)
     assert r.status_code == 403
     assert snapshot(db_path) == before
 
@@ -115,25 +160,28 @@ def test_admin_posts_require_session_bound_csrf(path, token, app, db, world, pri
     assert snapshot(db_path) == before
 
 
-@pytest.mark.parametrize("state", ["disabled", "pending_totp", "expired", "revoked"])
-def test_dead_or_incomplete_admin_sessions_reach_nothing(state, app, db, world, db_path):
-    admin_id, _ = make_real_admin(username="victim")
+@pytest.mark.parametrize("state", ["disabled", "group_user_inactive", "group_user_unverified", "expired", "revoked"])
+def test_dead_or_incomplete_admin_sessions_reach_nothing(state, app, db, world, db_path, chair):
+    group = state.startswith("group_user")
+    admin_id, _ = make_real_admin(username="victim", role="chair" if group else "global",
+                                  chairs=[chair] if group else ())
     c = new_client(app)
     csrf = login_as(c, admin_id)
     with write_session() as w:
         s = w.scalars(select(AdminSession).where(AdminSession.admin_id == admin_id)).one()
         if state == "disabled":  # flag flipped without revoking the sessions
             w.get(AdminUser, admin_id).active = False
-        elif state == "pending_totp":
-            s.totp_verified = False
+        elif state == "group_user_inactive":  # the linked account is deactivated: the session dies with it
+            w.get(AdminUser, admin_id).user.status = "inactive"
+        elif state == "group_user_unverified":
+            w.get(AdminUser, admin_id).user.verified_at = None
         elif state == "expired":
             s.expires_at = utcnow()
         else:
             s.revoked_at = utcnow()
     before = snapshot(db_path)
-    allowed_for_pending = {"/admin/totp", "/admin/totp/setup", "/admin/logout"}
     for method, path, _ in ROUTES:
-        if path == "/admin/login" or (state == "pending_totp" and path in allowed_for_pending):
+        if path == "/admin/login":
             continue
         r = call(c, method, path, world, csrf)
         assert r.status_code == 303 and r.headers["location"] == "/admin/login", (state, method, path)

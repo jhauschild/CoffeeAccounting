@@ -1,7 +1,8 @@
 """Scope checks for admin actors (PROMPT §6 "Authorization").
 
-Global admins may access everything. Chair admins may access only users whose *current*
-chair is one of their assigned chairs. Inactive admins may access nothing.
+Global (head) admins may access everything. Chair (group) admins may access only users whose
+*current* chair is the chair of the member account linked to them (v2: no `admin_chairs`).
+Inactive admins may access nothing.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AdminChair, AdminUser, User
+from app.models import AdminUser, User
 from app.services.errors import Forbidden, NotFound
 
 
@@ -19,6 +20,12 @@ def require_active(admin: AdminUser | None) -> AdminUser:
     if admin is None or not admin.active:
         raise Forbidden("admin account is not active")
     return admin
+
+
+def admin_label(admin: AdminUser) -> str:
+    """Name shown on admin-only pages and exports: the linked member's display name for a group admin
+    (or any admin with a linked account), the username for a CLI admin."""
+    return admin.user.display_name if admin.user is not None else admin.username
 
 
 def is_global(admin: AdminUser | None) -> bool:
@@ -37,8 +44,12 @@ def visible_chair_ids(db: Session, admin: AdminUser) -> set[uuid.UUID] | None:
     require_active(admin)
     if admin.role == "global":
         return None
-    rows = db.scalars(select(AdminChair.chair_id).where(AdminChair.admin_id == admin.id))
-    return set(rows)
+    # v2: a group admin sees exactly the chair of the linked user account, read from the database
+    # (not from a cached relationship) so a chair change takes effect immediately.
+    if admin.user_id is None:
+        return set()
+    chair_id = db.scalar(select(User.chair_id).where(User.id == admin.user_id))
+    return {chair_id} if chair_id is not None else set()
 
 
 def ensure_admin_can_access_chair(db: Session, admin: AdminUser, chair_id: uuid.UUID) -> None:

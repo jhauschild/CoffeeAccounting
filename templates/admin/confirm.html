@@ -1,0 +1,44 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import bal, words, held %}
+{% block admin_title %}{{ t("admin.stepup.title") }}{% endblock %}
+{% block admin_content %}
+<section class="card narrow">
+  <h1>{{ t("admin.stepup.title") }}</h1>
+  <p class="muted">{{ t("admin.stepup.intro") }}</p>
+  <dl class="totals confirm-summary">
+    <dt>{{ t("admin.stepup.action") }}</dt><dd>{{ t(view.label) }}</dd>
+    <dt>{{ t("admin.stepup.person") }}</dt><dd>{{ view.person }} <span class="muted">({{ view.chair }})</span></dd>
+    {% if view.extra.into %}<dt>{{ t("admin.stepup.into") }}</dt><dd>{{ view.extra.into }}</dd>{% endif %}
+    {% if view.extra.original %}<dt>{{ t("admin.stepup.original") }}</dt><dd>{{ view.extra.original }}</dd>
+    <dt>{{ t("admin.stepup.corrected_to") }}</dt><dd>{{ view.extra.corrected_to }}</dd>{% endif %}
+    {% if view.quantity is not none %}<dt>{{ t("admin.csv.quantity") }}</dt><dd>{{ view.quantity }}</dd>{% endif %}
+    <dt>{{ t(view.amount_label or "admin.stepup.amount") }}</dt><dd>{% if view.words %}{{ view.amount_cents|money }}{% else %}{{ bal(view.amount_cents) }}{% endif %}</dd>
+    {% if view.note %}<dt>{{ t("admin.csv.note") }}</dt><dd>{{ view.note }}</dd>{% endif %}
+    {% if view.show_balance %}
+    <dt>{{ t("admin.stepup.balance_before") }}</dt><dd>{% if view.words %}{{ words(view.balance_before_cents) }}{% else %}{{ bal(view.balance_before_cents) }}{% endif %}</dd>
+    <dt>{{ t("admin.stepup.balance_after") }}</dt><dd><strong>{% if view.words %}{{ words(view.balance_after_cents) }}{% else %}{{ bal(view.balance_after_cents) }}{% endif %}</strong></dd>
+    {% if view.words %}<dt>{{ t("admin.stepup.change") }}</dt><dd>{% if view.balance_after_cents > view.balance_before_cents %}{{ t("admin.stepup.change_up", amount=(view.balance_after_cents - view.balance_before_cents)|money) }}{% else %}{{ t("admin.stepup.change_down", amount=(view.balance_before_cents - view.balance_after_cents)|money) }}{% endif %}</dd>{% endif %}
+    {% endif %}
+    {% if view.held_before_cents is not none %}
+    <dt>{{ t("admin.stepup.held_before") }}</dt><dd>{{ held(view.held_before_cents) }}</dd>
+    <dt>{{ t("admin.stepup.held_after") }}</dt><dd><strong>{{ held(view.held_after_cents) }}</strong></dd>
+    {% endif %}
+  </dl>
+  {% if view.show_balance and not view.words %}<p class="muted">{{ t("admin.balance_hint") }}</p>{% endif %}
+  {% if error %}<p class="notice notice-error card" role="alert">{{ t("admin.stepup.err." ~ error) }}</p>{% endif %}
+  <form method="post" action="/admin/stepup/confirm" class="stack" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="payload" value="{{ payload }}">
+    <input type="hidden" name="nonce" value="{{ nonce }}">
+    {% if needs_code %}
+    <div class="field">
+      <label for="code">{{ t("admin.stepup.code") }}</label>
+      <input id="code" name="code" type="text" inputmode="text" maxlength="32" autocomplete="one-time-code" required autofocus>
+      <p class="muted">{{ t("admin.stepup.code_hint", minutes=(settings.stepup_window_seconds // 60)) }}</p>
+    </div>
+    {% endif %}
+    <button type="submit" class="button-block">{{ t("admin.stepup.confirm") }}</button>
+  </form>
+  <p><a class="button button-secondary button-block" href="{{ view.back_path }}">{{ t("admin.stepup.cancel") }}</a></p>
+</section>
+{% endblock %}

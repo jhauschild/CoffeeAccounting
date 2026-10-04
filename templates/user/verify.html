@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.guest.title" if view.kind == "guest" else "user.verify.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+{% if view.kind == "guest" %}
+<section class="card">
+  <h1>{{ t("user.guest.title") }}</h1>
+  <p>{{ t("user.guest.intro") }}</p>
+  <dl class="totals">
+    <dt>{{ t("user.guest.name") }}</dt><dd>{{ view.display_name }}</dd>
+    <dt>{{ t("user.guest.username") }}</dt><dd>{{ view.username }}</dd>
+    <dt>{{ t("user.guest.chair") }}</dt><dd>{{ view.chair_short_name }}</dd>
+  </dl>
+  <p>{{ t("user.guest.meaning") }}</p>
+  <form method="post" action="/verify/{{ token|urlencode }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" name="action" value="approve" class="button-block">{{ t("user.guest.approve") }}</button>
+    <button type="submit" name="action" value="reject" class="button-block button-secondary">{{ t("user.guest.reject") }}</button>
+  </form>
+</section>
+{% else %}
+{% include "user/_pending.html" %}
+<section class="card">
+  <h1>{{ t("user.verify.title") }}</h1>
+  <p>{{ t("user.verify.intro") }}</p>
+  <dl class="totals">
+    <dt>{{ t("user.verify.username") }}</dt><dd>{{ view.username }}</dd>
+    <dt>{{ t("user.verify.name") }}</dt><dd>{{ view.display_name }}</dd>
+    <dt>{{ t("user.verify.chair") }}</dt><dd>{{ view.chair_short_name }}</dd>
+  </dl>
+  <form method="post" action="/verify/{{ token|urlencode }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button-block">{{ t("user.verify.submit") }}</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

@@ -15,7 +15,8 @@
 <section class="card stack">
   <h1>{{ settings.app_title }}</h1>
   <p>{{ t("user.home.guest_intro") }}</p>
-  <a class="button button-block" href="/join">{{ t("user.home.get_started") }}</a>
+  <a class="button button-block" href="/login">{{ t("user.home.sign_in") }}</a>
+  <a class="button button-secondary button-block" href="/register">{{ t("user.home.create_account") }}</a>
 </section>
 {% endif %}
 {% endblock %}

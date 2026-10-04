@@ -1,0 +1,18 @@
+{% extends "site/base.html" %}
+{% block title %}{{ t("site.prices.title") }} – {{ settings.app_title }}{% endblock %}
+{% block site_content %}
+<h1>{{ t("site.prices.title") }}</h1>
+<p class="muted">{{ t("site.prices.intro") }}</p>
+{% if rows %}
+<div class="table-wrap"><table class="prices">
+  <thead><tr><th scope="col">{{ t("site.prices.col_from") }}</th><th scope="col" class="num">{{ t("site.prices.col_price") }}</th></tr></thead>
+  <tbody>
+  {% for p in rows %}
+    <tr><th scope="row">{{ p.from }}{% if p.state %} <span class="badge">{{ t("site.prices." ~ p.state) }}</span>{% endif %}</th><td class="num">{{ p.price_cents|money }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<p class="card muted">{{ t("site.prices.empty") }}</p>
+{% endif %}
+{% endblock %}

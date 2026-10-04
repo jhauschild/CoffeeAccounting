@@ -1,6 +1,14 @@
 {% macro bal(cents) -%}
 <span class="{{ 'neg' if cents < 0 else '' }}">{{ cents|money }}</span>
 {%- endmacro %}
+{% macro words(cents) -%}
+{%- if cents > 0 -%}{{ t("admin.balance.owes", amount=cents|money) }}
+{%- elif cents < 0 -%}{{ t("admin.balance.credit", amount=(cents|abs)|money) }}
+{%- else -%}{{ t("admin.balance.settled") }}{%- endif -%}
+{%- endmacro %}
+{% macro held(cents) -%}
+{{ (cents|abs)|money }}{% if cents < 0 %} <span class="badge">{{ t("admin.groups.negative") }}</span>{% endif %}
+{%- endmacro %}
 {% macro period(label, p) -%}
 <tr><th scope="row">{{ label }}</th>
   <td class="num" data-label="{{ t('admin.dash.shots') }}">{{ p.shots }}</td>

@@ -1,115 +1,139 @@
-"""End-to-end browser test (Playwright, headless Chromium): scan -> auto-submit -> access code ->
-registration -> success -> refresh -> second scan without any prompt (PROMPT §12).
+"""Browser e2e (Playwright, headless Chromium): the scan flows (PROMPT section 12, PLAN-v2 section 7).
 
-Skipped with an explicit reason if Playwright or the browser cannot be started."""
+* the original purpose: an anonymous scan keeps the coffee, /login, sign in, the pending coffee is recorded
+  once, refresh creates nothing, the next scan has no prompt;
+* a signed-in scan: success page ("Outstanding", "Shots this month"), refresh, rescan, undo;
+* anonymous scan followed by registration: the coffee is recorded only when the verify link is opened in the
+  SAME browser; in another browser it is dropped.
+
+Skipped with an explicit reason if Playwright or the browser cannot be started (see tests/e2e_support.py)."""
 
 from __future__ import annotations
 
-import os
-import socket
-import threading
-import time
-from pathlib import Path
+import re
 
-import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app import db as app_db
-from app.main import create_app
 from app.models import ConsumptionEvent, PendingAction, User
-from tests import factories
-from tests.conftest import TEST_ENV, reload_settings
-
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/pw-browsers")
-
-sync_api = pytest.importorskip("playwright.sync_api", reason="playwright is not installed")
+from tests.e2e_support import PASSWORD, browser, dd_for, live, new_page, register_member, sign_in  # noqa: F401
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def _events(live):
+    with live.session() as s:
+        rows = s.execute(select(ConsumptionEvent.type, ConsumptionEvent.quantity, ConsumptionEvent.amount_cents,
+                                ConsumptionEvent.reversal_of_id).order_by(ConsumptionEvent.created_at)).all()
+    return [tuple(r) for r in rows]
 
 
-@pytest.fixture
-def live_server(monkeypatch, db_url):
-    import uvicorn
+def test_anonymous_scan_login_records_pending_coffee_then_rescan(live, new_page):
+    """The old v1 test, migrated: scan without a session -> /login -> sign in -> success -> refresh -> rescan."""
+    member = live.make_member("Erika E2E", "erika.e2e")
+    page = new_page()
 
-    port = _free_port()
-    monkeypatch.setenv("PUBLIC_BASE_URL", f"http://127.0.0.1:{port}")
-    reload_settings()
-    server = uvicorn.Server(uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while not server.started and time.time() < deadline:
-        time.sleep(0.05)
-    assert server.started, "uvicorn did not start"
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    thread.join(timeout=10)
-
-
-def _installed_chromium() -> list[str]:
-    root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
-    found = sorted(root.glob("chromium_headless_shell-*/chrome-linux/headless_shell"))
-    found += sorted(root.glob("chromium-*/chrome-linux/chrome"))
-    return [str(p) for p in found]
-
-
-@pytest.fixture
-def browser():
-    with sync_api.sync_playwright() as p:
-        b, error = None, None
-        for exe in [None, *_installed_chromium()]:  # Playwright's own revision first, then what is installed
-            try:
-                b = p.chromium.launch(executable_path=exe, args=["--no-sandbox"])
-                break
-            except Exception as exc:  # noqa: BLE001
-                error = exc
-        if b is None:
-            pytest.skip(f"headless Chromium cannot be launched here: {str(error).splitlines()[0][:150]}")
-        yield b
-        b.close()
-
-
-def test_scan_register_refresh_scan_again(live_server, browser, db, engine):
-    chair = factories.make_chair(db, short_name="E2E", full_name="End to End Chair")
-    factories.set_price(db, 50)
-    page = browser.new_context().new_page()
-
-    # 1. First scan: no session -> auto-submit -> /join asks for the access code.
-    page.goto(f"{live_server}/coffee/double")
-    page.wait_for_url("**/join")
+    page.goto(live.url("/coffee/double"))  # auto-submit: no session, so the coffee is kept and /login is shown
+    page.wait_for_url("**/login")
     assert "will be recorded" in page.content()
+    assert page.locator("a[href='/register']").count() == 1
+    assert _events(live) == []
 
-    # 2. Access code -> choice page -> registration form.
-    page.fill("#code", TEST_ENV["ACCESS_CODE"])
-    page.click("button[type=submit]")
-    page.wait_for_selector("a[href='/register']")
-    page.click("a[href='/register']")
-    page.fill("#display_name", "Erika E2E")
-    page.select_option("#chair_id", str(chair.id))
-    page.check("#privacy_ack")
-    page.click("button[type=submit]")
-
-    # 3. Success page for the pending double.
+    page.fill("#username", member.username)
+    page.fill("#password", PASSWORD)
+    page.click("form[action='/login'] button[type=submit]")
     page.wait_for_url("**/coffee/done/*")
     assert "Double recorded" in page.content() and "€1.00" in page.content()
     done_url = page.url
 
-    # 4. Refresh does not record anything new.
     page.reload()
     assert page.url == done_url and "Double recorded" in page.content()
+    assert _events(live) == [("double", 2, 100, None)]
 
-    # 5. A second scan has no prompt at all: scan -> auto-submit -> success.
-    page.goto(f"{live_server}/coffee/single")
+    page.goto(live.url("/coffee/single"))  # no prompt at all: scan -> auto-submit -> success
     page.wait_for_url("**/coffee/done/*")
     assert page.url != done_url and "Single recorded" in page.content()
 
-    with engine.connect() as conn:
-        events = conn.execute(select(ConsumptionEvent.type, ConsumptionEvent.quantity, ConsumptionEvent.amount_cents)
-                              .order_by(ConsumptionEvent.created_at)).all()
-        assert [tuple(e) for e in events] == [("double", 2, 100), ("single", 1, 50)]
-        assert conn.execute(select(User.id)).all().__len__() == 1
-        assert conn.execute(select(PendingAction.consumed_at)).scalar_one() is not None
+    assert _events(live) == [("double", 2, 100, None), ("single", 1, 50, None)]
+    assert live.count(User) == 1
+    with live.session() as s:
+        assert s.execute(select(PendingAction.consumed_at)).scalar_one() is not None
+
+
+def test_signed_in_scan_success_page_refresh_rescan_undo(live, new_page):
+    member = live.make_member("Sam Scanner", "sam.scanner")
+    page = new_page()
+    sign_in(page, live, member.username)
+
+    # First scan: auto-submit records one single; the success page speaks of what is outstanding.
+    page.goto(live.url("/coffee/single"))
+    page.wait_for_url("**/coffee/done/*")
+    first_url = page.url
+    assert "Single recorded" in page.content()
+    assert page.locator(".headline").inner_text().strip() == "Outstanding: €0.50"
+    assert dd_for(page, "Shots this month") == "1"
+    assert len(_events(live)) == 1
+
+    # Refresh (a GET of the success page) creates nothing.
+    page.reload()
+    assert page.url == first_url and dd_for(page, "Shots this month") == "1"
+    assert len(_events(live)) == 1
+
+    # Rescan: a second coffee, with no prompt in between (scan page -> success page only).
+    page.goto(live.url("/coffee/single"))
+    page.wait_for_url("**/coffee/done/*")
+    assert page.url != first_url
+    assert dd_for(page, "Shots this month") == "2"
+    assert page.locator(".headline").inner_text().strip() == "Outstanding: €1.00"
+    assert len(_events(live)) == 2
+
+    # Undo the latest coffee.
+    page.click("form[action^='/coffee/undo/'] button[type=submit]")
+    page.wait_for_selector("form[action^='/coffee/undo/']", state="detached")
+    assert "This coffee was undone" in page.content()
+    assert dd_for(page, "Shots this month") == "1"
+    assert page.locator(".headline").inner_text().strip() == "Outstanding: €0.50"
+    events = _events(live)
+    assert len(events) == 3 and events[2][3] is not None  # the reversal row; nothing was deleted
+
+
+def _scan_then_register(page, live, username: str, email: str):
+    page.goto(live.url("/coffee/single"))
+    page.wait_for_url("**/login")
+    page.click("a[href='/register']")
+    page.wait_for_url("**/register")
+    register_member(page, live, username=username, name="Nora Pending", email=email)
+
+
+def test_pending_coffee_is_dropped_when_verified_in_another_browser(live, new_page):
+    before = live.mail.count("nora@tum.de")
+    first = new_page()
+    _scan_then_register(first, live, "nora.pending", "nora@tum.de")
+    mail = live.mail.wait_new("nora@tum.de", before)
+
+    second = new_page()  # another browser: it never held the pending coffee
+    second.goto(mail.link("/verify/"))
+    assert second.locator("form[action^='/verify/'] button[type=submit]").count() == 1
+    assert live.user("nora.pending") is None  # GET wrote nothing
+    second.click("form[action^='/verify/'] button[type=submit]")
+    second.wait_for_url(re.compile(r".*/account.*"))
+    assert "Nora Pending" in second.content()
+
+    assert live.user("nora.pending") is not None
+    assert _events(live) == []  # the pending coffee was dropped, not transferred
+
+
+def test_pending_coffee_is_recorded_when_verified_in_the_same_browser(live, new_page):
+    before = live.mail.count("nora@tum.de")
+    page = new_page()
+    _scan_then_register(page, live, "nora.pending", "nora@tum.de")
+    mail = live.mail.wait_new("nora@tum.de", before)
+    assert _events(live) == []  # nothing is recorded while the address is unverified
+
+    page.goto(mail.link("/verify/"))
+    assert live.user("nora.pending") is None
+    page.click("form[action^='/verify/'] button[type=submit]")
+    page.wait_for_url("**/coffee/done/*")
+    assert "Single recorded" in page.content()
+    assert _events(live) == [("single", 1, 50, None)]
+    page.reload()  # a refresh of the success page records nothing more
+    assert len(_events(live)) == 1
+    with live.session() as s:
+        assert s.scalar(select(func.count()).select_from(ConsumptionEvent)) == 1

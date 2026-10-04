@@ -16,5 +16,9 @@
     </div>
     <button type="submit" class="button-block">{{ t("admin.setup.submit") }}</button>
   </form>
+  <form method="post" action="/admin/logout" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button-secondary button-block">{{ t("admin.setup.cancel") }}</button>
+  </form>
 </section>
 {% endblock %}

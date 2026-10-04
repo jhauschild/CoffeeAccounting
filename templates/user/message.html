@@ -2,9 +2,9 @@
 {% block title %}{{ t(title) }} – {{ settings.app_title }}{% endblock %}
 {% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
 {% block content %}
-<section class="card notice notice-{{ 'error' if tone == 'error' else 'warn' }}">
+<section class="card notice notice-{{ tone if tone in ('error', 'ok') else 'warn' }}">
   <h1>{{ t(title) }}</h1>
-  <p>{{ t(body) }}</p>
+  <p>{{ t(body, **(args or {})) }}</p>
   {% if link %}<p><a class="button" href="{{ link[0] }}">{{ t(link[1]) }}</a></p>{% endif %}
   <p><a href="/">{{ t("common.back_home") }}</a></p>
 </section>

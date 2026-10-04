@@ -1,4 +1,4 @@
-"""Admin login over HTTP: password, TOTP, recovery code, enrollment, rate limiting, cookies, CSRF."""
+"""Admin login over HTTP: password login, one-time TOTP enrolment, group admins, rate limiting, cookies, CSRF."""
 
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ from app.models import AdminSession, AdminUser, AuditLog
 from app.services import admin_auth
 from tests import factories
 from tests.admin_support import (  # noqa: F401
-    CSRF_RE, NEW_PASSWORD, PASSWORD, current_code, fast_hasher, login_as, make_real_admin, new_client, page_csrf,
+    CSRF_RE, NEW_PASSWORD, PASSWORD, current_code, fast_hasher, login_as, login_name, make_real_admin, new_client,
+    page_csrf,
 )
 
 
@@ -36,80 +37,129 @@ def test_login_page_and_csrf(client):
     assert r.status_code == 403
 
 
-def test_full_login_with_totp_and_cookie_attributes(monkeypatch):
+def test_password_login_gives_full_session_and_cookie_attributes(monkeypatch):
     from fastapi.testclient import TestClient
     from tests.conftest import reload_settings
     from app.main import create_app
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://testserver")
     reload_settings()
     client = TestClient(create_app(), base_url="https://testserver", raise_server_exceptions=False)
-    _, secret = make_real_admin()
+    make_real_admin()  # TOTP enabled: still no second factor at login
     r = post_login(client)
-    assert r.status_code == 303 and r.headers["location"] == "/admin/totp"
-    pending_cookie = admin_cookie(r)
+    assert r.status_code == 303 and r.headers["location"] == "/admin"
+    cookie = admin_cookie(r)
     for attr in ("Path=/admin", "HttpOnly", "SameSite=lax", "Secure"):
-        assert attr.lower() in pending_cookie.lower(), pending_cookie
-    pending_token = pending_cookie.split(";")[0].split("=", 1)[1]
-    client.cookies.set("coffee_admin", pending_token, path="/admin")
-    assert client.get("/admin", follow_redirects=False).headers["location"] == "/admin/login"  # not yet complete
-    page = client.get("/admin/totp")
-    assert page.status_code == 200
-    token = CSRF_RE.search(page.text).group(1)
-    bad = client.post("/admin/totp", data={"code": "000000", "csrf_token": token}, follow_redirects=False)
-    assert bad.status_code == 401
-    ok = client.post("/admin/totp", data={"code": current_code(secret), "csrf_token": token}, follow_redirects=False)
-    assert ok.status_code == 303 and ok.headers["location"] == "/admin"
-    full_token = admin_cookie(ok).split(";")[0].split("=", 1)[1]
-    assert full_token != pending_token  # rotated
-    assert "max-age=43200" in admin_cookie(ok).lower()  # 12 hours
-    client.cookies.set("coffee_admin", full_token, path="/admin")
+        assert attr.lower() in cookie.lower(), cookie
+    assert "max-age=43200" in cookie.lower()  # 12 hours
+    client.cookies.set("coffee_admin", cookie.split(";")[0].split("=", 1)[1], path="/admin")
     assert client.get("/admin").status_code == 200
+    assert client.get("/admin/login", follow_redirects=False).headers["location"] == "/admin"  # already signed in
     with read_session() as r:
+        session = r.scalars(select(AdminSession)).one()
+        assert session.stepup_until is None
         actions = [a.action for a in r.scalars(select(AuditLog).order_by(AuditLog.id))]
-    assert actions[-3:] == ["admin.login.password_ok", "admin.login.failed", "admin.login.success"]
+    assert actions == ["admin.created", "admin.login.success"]
     assert PASSWORD not in str(actions)
 
 
-def test_recovery_code_login(client):
+def test_old_totp_login_routes_are_gone(client):
     admin_id, _ = make_real_admin()
-    from app.db import write_session
-    codes = admin_auth.new_recovery_codes()
-    with write_session() as w:
-        w.get(AdminUser, admin_id).recovery_codes = [admin_auth._recovery_hash(c) for c in codes]
-    r = post_login(client)
-    client.cookies.set("coffee_admin", admin_cookie(r).split(";")[0].split("=", 1)[1], path="/admin")
-    token = CSRF_RE.search(client.get("/admin/totp").text).group(1)
-    ok = client.post("/admin/totp", data={"code": codes[3], "csrf_token": token}, follow_redirects=False)
-    assert ok.status_code == 303 and ok.headers["location"] == "/admin"
-    with read_session() as r:
-        assert len(r.get(AdminUser, admin_id).recovery_codes) == 7
+    login_as(client, admin_id)
+    assert client.get("/admin/totp", follow_redirects=False).status_code == 404
+    assert client.post("/admin/totp", data={"code": "123456"}, follow_redirects=False).status_code in (404, 405)
 
 
-def test_enrollment_flow_shows_recovery_codes_once(client):
-    admin_id, _ = make_real_admin(totp=False)
-    r = post_login(client)
-    assert r.headers["location"] == "/admin/totp/setup"
-    client.cookies.set("coffee_admin", admin_cookie(r).split(";")[0].split("=", 1)[1], path="/admin")
-    assert client.get("/admin/users", follow_redirects=False).status_code == 303  # nothing works before enrollment
-    page = client.get("/admin/totp/setup")
+def enrol_via_web(client, admin_id, first_path):
+    """Walk the one-time enrolment starting at `first_path`; returns the response that shows the codes."""
+    page = client.get(first_path, follow_redirects=True)
     assert page.status_code == 200 and "<svg" in page.text and "otpauth" not in page.text
     token = CSRF_RE.search(page.text).group(1)
     with read_session() as r:
         secret = r.get(AdminUser, admin_id).totp_secret
-    assert secret and secret.replace("", "") and " ".join(secret[i:i + 4] for i in range(0, len(secret), 4)) in page.text
+    assert secret and " ".join(secret[i:i + 4] for i in range(0, len(secret), 4)) in page.text
     bad = client.post("/admin/totp/setup", data={"code": "123456", "csrf_token": token})
     assert bad.status_code == 401
-    ok = client.post("/admin/totp/setup", data={"code": current_code(secret), "csrf_token": token})
+    return client.post("/admin/totp/setup", data={"code": current_code(secret), "csrf_token": token})
+
+
+def test_required_enrolment_confines_the_admin_until_totp_is_set_up(client, monkeypatch):
+    from tests.conftest import reload_settings
+    monkeypatch.setenv("BALANCE_TOTP_REQUIRED", "true")
+    reload_settings()
+    admin_id, _ = make_real_admin(totp=False)
+    r = post_login(client)
+    assert r.status_code == 303 and r.headers["location"] == "/admin"  # full session, then redirected on
+    client.cookies.set("coffee_admin", admin_cookie(r).split(";")[0].split("=", 1)[1], path="/admin")
+    for path in ("/admin", "/admin/users", "/admin/chairs", "/admin/audit", "/admin/account"):
+        resp = client.get(path, follow_redirects=False)
+        assert resp.status_code == 303 and resp.headers["location"] == "/admin/totp/setup", path
+    ok = enrol_via_web(client, admin_id, "/admin")  # follows the redirect to the QR page
     assert ok.status_code == 200
     codes = re.findall(r"<code>([A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4})</code>", ok.text)
-    assert len(codes) == 8
-    new_cookie = admin_cookie(ok).split(";")[0].split("=", 1)[1]
-    client.cookies.set("coffee_admin", new_cookie, path="/admin")
+    assert len(codes) == 8 and len(set(codes)) == 8
+    assert "coffee_admin=" not in ok.headers.get("set-cookie", "")  # the session is kept, not rotated
     assert client.get("/admin").status_code == 200
+    assert client.get("/admin/totp/setup", follow_redirects=False).headers["location"] == "/admin"  # once only
     with read_session() as r:
         stored = r.get(AdminUser, admin_id)
-        assert stored.totp_enabled and not set(codes) & set(stored.recovery_codes)
+        assert stored.totp_enabled and not set(codes) & set(stored.recovery_codes) and len(stored.recovery_codes) == 8
+        session = r.scalars(select(AdminSession)).one()
+        assert admin_auth.has_open_stepup(session)  # enrolment opens the step-up window
         assert [a.action for a in r.scalars(select(AuditLog)) if a.action == "admin.totp_enrolled"]
+
+
+def test_enrolment_page_allows_logout_and_needs_csrf(client, monkeypatch):
+    from tests.conftest import reload_settings
+    monkeypatch.setenv("BALANCE_TOTP_REQUIRED", "true")
+    reload_settings()
+    admin_id, _ = make_real_admin(totp=False)
+    csrf = login_as(client, admin_id)
+    assert client.post("/admin/totp/setup", data={"code": "123456", "csrf_token": "bogus"}).status_code == 403
+    r = client.post("/admin/logout", data={"csrf_token": csrf}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/admin/login"
+
+
+def test_totp_not_required_login_goes_straight_to_dashboard(client):
+    make_real_admin(totp=False)  # development default: BALANCE_TOTP_REQUIRED false
+    r = post_login(client)
+    assert r.status_code == 303 and r.headers["location"] == "/admin"
+    client.cookies.set("coffee_admin", admin_cookie(r).split(";")[0].split("=", 1)[1], path="/admin")
+    assert client.get("/admin", follow_redirects=False).status_code == 200
+    page = client.get("/admin/account")
+    assert page.status_code == 200 and "/admin/totp/setup" in page.text  # optional enrolment is offered
+    assert client.get("/admin/totp/setup").status_code == 200
+
+
+def test_group_admin_web_login_and_enrolment(client, chair, monkeypatch):
+    from tests.conftest import reload_settings
+    monkeypatch.setenv("BALANCE_TOTP_REQUIRED", "true")
+    reload_settings()
+    admin_id, _ = make_real_admin(role="chair", chairs=[chair], totp=False)
+    name = login_name(admin_id)
+    assert post_login(client, username="boss").status_code == 401  # the admin row's own name does not log in
+    r = post_login(client, username=name)
+    assert r.status_code == 303 and r.headers["location"] == "/admin"
+    client.cookies.set("coffee_admin", admin_cookie(r).split(";")[0].split("=", 1)[1], path="/admin")
+    assert client.get("/admin", follow_redirects=False).headers["location"] == "/admin/totp/setup"
+    assert enrol_via_web(client, admin_id, "/admin/totp/setup").status_code == 200
+    assert client.get("/admin").status_code == 200
+    with read_session() as r:
+        assert r.get(AdminUser, admin_id).totp_enabled
+
+
+def test_group_admin_changes_the_account_password_on_the_account_page(client, chair):
+    from app.services import passwords
+    admin_id, _ = make_real_admin(role="chair", chairs=[chair])
+    r = post_login(client, username=login_name(admin_id))
+    client.cookies.set("coffee_admin", admin_cookie(r).split(";")[0].split("=", 1)[1], path="/admin")
+    csrf = page_csrf(client, "/admin/account")
+    r = client.post("/admin/account/password", follow_redirects=False,
+                    data={"current_password": PASSWORD, "new_password": "tenchars!!", "new_password2": "tenchars!!",
+                          "csrf_token": csrf})
+    assert "msg=password_changed" in r.headers["location"]
+    with read_session() as rs:
+        user = rs.get(AdminUser, admin_id).user
+        assert passwords.verify_password(user.password_hash, "tenchars!!")
 
 
 def test_web_rate_limit_after_five_failures(client):
@@ -227,16 +277,3 @@ def test_bootstrap_on_app_start(monkeypatch):
         pass
     with read_session() as r:
         assert [a.username for a in admin_auth.list_admins(r)] == ["first"]
-
-
-def test_totp_not_required_login_goes_straight_to_dashboard(client, monkeypatch):
-    from tests.conftest import reload_settings
-    monkeypatch.setenv("ADMIN_TOTP_REQUIRED", "false")
-    reload_settings()
-    make_real_admin(totp=False)
-    r = post_login(client)
-    assert r.status_code == 303 and r.headers["location"] == "/admin"
-    client.cookies.set("coffee_admin", admin_cookie(r).split(";")[0].split("=", 1)[1], path="/admin")
-    page = client.get("/admin/account")
-    assert page.status_code == 200 and "/admin/totp/setup" in page.text  # optional enrollment is offered
-    assert client.get("/admin/totp/setup").status_code == 200

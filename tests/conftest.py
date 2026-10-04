@@ -43,15 +43,17 @@ TEST_ENV = {
     "ENVIRONMENT": "development",
     "PUBLIC_BASE_URL": "http://testserver",
     "SECRET_KEY": "test-secret-key-0123456789abcdef0123456789",
-    "ACCESS_CODE": "test-access-code",
     "LOCAL_TIMEZONE": "Europe/Berlin",
     "UNDO_WINDOW_SECONDS": "300",
     "MAX_COFFEES_PER_SESSION_PER_HOUR": "30",
-    "ADMIN_TOTP_REQUIRED": "true",
     "CURRENCY": "EUR",
     "CSV_DELIMITER": ";",
     "CSV_DECIMAL_SEPARATOR": ",",
     "TRUSTED_PROXY_IPS": "",
+    # Cheap Argon2 parameters for the test suite only (production defaults live in app/config.py).
+    "ARGON2_TIME_COST": "1",
+    "ARGON2_MEMORY_COST_KIB": "8",
+    "ARGON2_PARALLELISM": "1",
 }
 
 
@@ -175,13 +177,3 @@ def login(client, db):
         return raw
 
     return _login
-
-
-@pytest.fixture
-def gate_cookie(client):
-    """Give `client` a valid `coffee_gate` cookie (access gate passed)."""
-    from app.services.gate import GATE_COOKIE, make_gate_cookie
-
-    value = make_gate_cookie()
-    client.cookies.set(GATE_COOKIE, value)
-    return value

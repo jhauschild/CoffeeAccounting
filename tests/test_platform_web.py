@@ -18,7 +18,7 @@ from app.services.errors import NoPriceConfigured
 from app.services.users import set_user_status
 from app.timeutil import utcnow
 from app.web import deps, tokens
-from app.web.deps import UserContext, client_ip, csrf_token_for, require_csrf, require_gate, require_user
+from app.web.deps import UserContext, client_ip, csrf_token_for, form_csrf_token, require_csrf, require_user
 from app.web.middleware import CSP
 from app.web.templating import templates
 from tests.conftest import reload_settings
@@ -27,7 +27,7 @@ PROD_ENV = {
     "ENVIRONMENT": "production",
     "PUBLIC_BASE_URL": "https://coffee.example.org",
     "SECRET_KEY": "Zq8v3mL1x9Rk2pT7wY4bN6cF0hJ5sD8gQ1aE3uI7oP",
-    "ACCESS_CODE": "Kaffee-2026-Lab",
+    "MAIL_FROM": "coffee@example.org",
 }
 
 
@@ -50,13 +50,15 @@ def _router() -> APIRouter:
     def me(ctx: UserContext = Depends(require_user)):
         return {"user": str(ctx.user.id)}
 
-    @r.get("/t/gated", dependencies=[Depends(require_gate)])
-    def gated():
-        return {"ok": True}
-
     @r.get("/t/form")
     def form(request: Request):
         return {"csrf": csrf_token_for(request)}
+
+    @r.get("/t/anonform")
+    def anonform(request: Request):
+        from app.web.templating import render
+
+        return render(request, "user/forgot.html", {"csrf_token": form_csrf_token(request)})
 
     @r.post("/t/form", dependencies=[Depends(require_csrf)])
     def post(name: str = Form("")):
@@ -70,7 +72,7 @@ def _router() -> APIRouter:
 
 
 @pytest.fixture
-def client(app):  # overrides conftest's `client` so `login`/`gate_cookie` apply to it
+def client(app):  # overrides conftest's `client` so `login` applies to it
     app.include_router(_router())
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
@@ -111,9 +113,8 @@ def test_production_hsts_and_no_docs(monkeypatch):
     {"SECRET_KEY": ""},
     {"SECRET_KEY": "short"},
     {"SECRET_KEY": "change-me-change-me-change-me-change-me"},
-    {"ACCESS_CODE": ""},
-    {"ACCESS_CODE": "1234567"},
-    {"ACCESS_CODE": "changeme"},
+    {"MAIL_FROM": ""},
+    {"MAIL_BACKEND": "console"},
 ])
 def test_production_startup_refuses_insecure_config(monkeypatch, env):
     for k, v in {**PROD_ENV, **env}.items():
@@ -170,10 +171,10 @@ def test_request_size_limit(client):
     assert client.post("/t/echo", content=chunks()).status_code == 413
 
 
-# ----- user session, gate, CSRF ---------------------------------------------------------------
+# ----- user session, CSRF ---------------------------------------------------------------
 def test_require_user_and_rotation(client, login, user, db, global_admin):
     r = client.get("/t/me", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/join"
+    assert r.status_code == 303 and r.headers["location"] == "/login"
     raw = login(user)
     assert client.get("/t/me").json() == {"user": str(user.id)}
     with write_session() as w:
@@ -182,32 +183,34 @@ def test_require_user_and_rotation(client, login, user, db, global_admin):
     assert raw
 
 
-def test_gate_dependency(client, login, user):
-    assert client.get("/t/gated", follow_redirects=False).headers["location"] == "/join"
-    client.cookies.set(deps.GATE_COOKIE, "forged.value")
-    assert client.get("/t/gated", follow_redirects=False).status_code == 303
-    client.cookies.clear()
+def test_csrf_user_binding(client, login, user):
+    assert client.post("/t/form", data={"name": "a"}).status_code == 403  # no binding at all
     login(user)
-    assert client.get("/t/gated").json() == {"ok": True}
-
-
-def test_gate_cookie_unlocks(client, gate_cookie):
-    assert client.get("/t/gated").json() == {"ok": True}
-
-
-def test_csrf_gate_and_user_binding(client, gate_cookie, login, user):
-    assert client.post("/t/form", data={"name": "a"}).status_code == 403
     token = client.get("/t/form").json()["csrf"]
     assert token
     assert client.post("/t/form", data={"name": "a", "csrf_token": token + "0"}).status_code == 403
     assert client.post("/t/form", data={"name": "a", "csrf_token": token}).json() == {"name": "a"}
-    login(user)  # binding switches to the user session; the gate token no longer works
+    assert strings.t("error.csrf") in client.post("/t/form", data={}).text
+
+
+def test_csrf_pre_session_cookie_binding(client, login, user):
+    import re
+
+    page = client.get("/t/anonform")
+    cookie = client.cookies.get(deps.CSRF_COOKIE)
+    assert cookie and "coffee_csrf=" in page.headers["set-cookie"] and "HttpOnly" in page.headers["set-cookie"]
+    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+    assert token == tokens.csrf_token("anon", cookie)
+    assert client.get("/t/anonform").text.count(token) == 1  # the same browser keeps its binding, no new cookie
+    assert client.post("/t/form", data={"csrf_token": token}).json() == {"name": ""}
+    assert client.post("/t/form", data={"csrf_token": token + "0"}).status_code == 403
+    client.cookies.set(deps.CSRF_COOKIE, "x" * 65)  # over-long cookie values are not a binding
+    assert client.post("/t/form", data={"csrf_token": tokens.csrf_token("anon", "x" * 65)}).status_code == 403
+    client.cookies.set(deps.CSRF_COOKIE, cookie)
+    login(user)  # a session replaces the pre-session binding
     assert client.post("/t/form", data={"csrf_token": token}).status_code == 403
     user_token = client.get("/t/form").json()["csrf"]
-    assert user_token != token
-    r = client.post("/t/form", data={"csrf_token": user_token})
-    assert r.status_code == 200
-    assert strings.t("error.csrf") in client.post("/t/form", data={}).text
+    assert user_token != token and client.post("/t/form", data={"csrf_token": user_token}).status_code == 200
 
 
 def test_csrf_requires_binding(client):
@@ -249,7 +252,7 @@ def test_cookie_flags_production(monkeypatch):
     prod_app(monkeypatch)
     resp = Response()
     deps.set_session_cookie(resp, "tok")
-    deps.set_gate_cookie(resp)
+    deps.set_csrf_cookie(resp, "anon")
     deps.set_pending_cookie(resp, "pid")
     cookies = resp.headers.getlist("set-cookie")
     assert len(cookies) == 3
@@ -271,10 +274,6 @@ def test_scan_token_sign_verify_expiry_tamper():
     assert tokens.make_scan_token("single") != tokens.make_scan_token("single")
     with pytest.raises(ValueError):
         tokens.make_scan_token("triple")
-    reg = tokens.make_registration_token(now=now)
-    assert tokens.verify_registration_token(reg, now=now)
-    assert tokens.verify_registration_token(reg, now=now + timedelta(minutes=61)) is None
-    assert tokens.verify_registration_token(tok, now=now) is None  # wrong purpose
 
 
 def test_csrf_tokens():

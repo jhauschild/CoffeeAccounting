@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% from "user/_fields.html" import field %}
+{% block title %}{{ t("user.login.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+{% include "user/_pending.html" %}
+{% if notice %}<p class="card notice notice-ok" role="status">{{ t(notice) }}</p>{% endif %}
+<section class="card">
+  <h1>{{ t("user.login.title") }}</h1>
+  <p>{{ t("user.login.intro") }}</p>
+  {% if error %}<p class="field-error" role="alert">{{ t("user.login.error") }}</p>{% endif %}
+  <form method="post" action="/login">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {{ field("username", t("user.login.username"), username, autocomplete="username") }}
+    {{ field("password", t("user.login.password"), "", type="password", autocomplete="current-password", maxlength=1000) }}
+    <button type="submit" class="button-block">{{ t("user.login.submit") }}</button>
+  </form>
+  <p><a href="/forgot">{{ t("user.login.forgot") }}</a></p>
+</section>
+<section class="card stack">
+  <p>{{ t("user.login.create_hint") }}</p>
+  <a class="button button-secondary button-block" href="/register">{{ t("user.login.create") }}</a>
+</section>
+{% endblock %}

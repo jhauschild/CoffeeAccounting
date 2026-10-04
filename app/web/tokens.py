@@ -2,11 +2,9 @@
 
 * Scan token (PROMPT §3): kind + random nonce + issued-at, valid 30 minutes. Issuing it
   writes nothing to the database.
-* Registration token: one-time token for the registration form (see
-  `app.services.onboarding` for how single use is enforced), valid 1 hour.
 * CSRF tokens: deterministic MAC bound to a scope and a per-session key, so they need no
-  storage and die with the session. Scopes: "user" (user session id), "gate" (gate cookie
-  value, for pre-session forms), "admin" (admin session's `csrf_secret`).
+  storage and die with the session. Scopes: "user" (user session id), "anon" (the
+  `coffee_csrf` cookie, for forms submitted before sign-in), "admin" (admin session's `csrf_secret`).
 """
 
 from __future__ import annotations
@@ -20,10 +18,8 @@ from app.models import COFFEE_KINDS
 from app.services import signing
 
 SCAN_TOKEN_MAX_AGE = 30 * 60
-REGISTRATION_TOKEN_MAX_AGE = 60 * 60
 CSRF_FIELD = "csrf_token"
 SCAN_TOKEN_FIELD = "token"
-REGISTRATION_TOKEN_FIELD = "registration_token"
 
 
 @dataclass(frozen=True)
@@ -48,17 +44,6 @@ def verify_scan_token(token: str | None, kind: str, now: datetime | None = None)
     if not isinstance(nonce, str) or not 16 <= len(nonce) <= 64:
         return None
     return ScanToken(kind, nonce, datetime.fromtimestamp(payload["iat"], timezone.utc))
-
-
-def make_registration_token(now: datetime | None = None) -> str:
-    return signing.sign("register", {"n": secrets.token_urlsafe(24)}, now=now)
-
-
-def verify_registration_token(token: str | None, now: datetime | None = None) -> str | None:
-    """Return the token's nonce (pass it to `register_and_start_session`) or None."""
-    payload = signing.unsign("register", token, max_age=REGISTRATION_TOKEN_MAX_AGE, now=now)
-    nonce = payload.get("n") if payload else None
-    return nonce if isinstance(nonce, str) and 16 <= len(nonce) <= 64 else None
 
 
 def csrf_token(scope: str, key: str) -> str:

@@ -1,0 +1,35 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import held %}
+{% block admin_title %}{{ t("admin.admins.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.admins.title") }}</h1>
+<p class="muted">{{ t("admin.admins.intro") }}</p>
+<p><a class="button button-secondary" href="/admin/groups">{{ t("admin.admins.groups_link") }}</a></p>
+
+<section class="card">
+  <h2>{{ t("admin.admins.head") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.admins.username") }}</th><th>{{ t("admin.admins.status") }}</th><th>{{ t("admin.admins.totp") }}</th></tr></thead>
+    <tbody>
+    {% for a in holders.head_admins %}<tr>
+      <td data-label="{{ t('admin.admins.username') }}">{{ a.username }}</td>
+      <td data-label="{{ t('admin.admins.status') }}">{{ t("admin.admins.active") if a.active else t("admin.admins.disabled") }}</td>
+      <td data-label="{{ t('admin.admins.totp') }}">{{ t("admin.admins.totp_on") if a.totp_enabled else t("admin.admins.totp_off") }}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+
+<section class="card">
+  <h2>{{ t("admin.admins.group") }}</h2>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.admins.name") }}</th><th>{{ t("admin.csv.chair") }}</th><th>{{ t("admin.admins.status") }}</th><th class="num">{{ t("admin.admins.held") }}</th></tr></thead>
+    <tbody>
+    {% for a in holders.group_admins %}<tr>
+      <td data-label="{{ t('admin.admins.name') }}"><a href="/admin/users/{{ a.user_id }}">{{ a.display_name }}</a></td>
+      <td data-label="{{ t('admin.csv.chair') }}">{{ a.chair_short_name }}</td>
+      <td data-label="{{ t('admin.admins.status') }}">{{ t("admin.admins.active") if a.active else t("admin.admins.former") }}</td>
+      <td class="num" data-label="{{ t('admin.admins.held') }}">{{ held(a.held_cents) }}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted">{{ t("admin.admins.none_group") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endblock %}

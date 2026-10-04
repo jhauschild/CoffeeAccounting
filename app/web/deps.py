@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import secrets
+import threading
+import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -24,13 +27,15 @@ from starlette.responses import Response
 from app.config import get_settings
 from app.db import read_session, write_session
 from app.models import User, UserSession
-from app.services import gate, pending, sessions
+from app.services import pending, sessions
 from app.web import tokens
 
 log = logging.getLogger(__name__)
 
 SESSION_COOKIE = sessions.SESSION_COOKIE
-GATE_COOKIE = gate.GATE_COOKIE
+CSRF_COOKIE = "coffee_csrf"  # pre-session CSRF binding for the sign-in, registration and recovery forms
+CSRF_COOKIE_MAX_AGE = 3600
+MAX_CSRF_COOKIE_LENGTH = 64
 PENDING_COOKIE = pending.PENDING_COOKIE
 _UNSET = object()
 
@@ -71,12 +76,37 @@ def _is_trusted(ip: str, trusted) -> bool:
     return any(addr in net for net in trusted)
 
 
+UNTRUSTED_FORWARDED_WARN_INTERVAL = 3600.0  # seconds between two "untrusted X-Forwarded-For" warnings
+_forwarded_warned_at: float | None = None
+_forwarded_lock = threading.Lock()
+
+
+def _warn_untrusted_forwarded(peer: str) -> None:
+    """Production only, at most once per hour: a request carried `X-Forwarded-For` but its peer is not in
+    TRUSTED_PROXY_IPS, so the header is ignored. Behind a reverse proxy that means every visitor shares the
+    proxy's address (one rate-limit bucket: 20 failed sign-ins lock everybody out; final audit L2). Nothing the
+    client sent is logged, only the connecting peer."""
+    global _forwarded_warned_at
+    now = time.monotonic()
+    with _forwarded_lock:
+        if _forwarded_warned_at is not None and now - _forwarded_warned_at < UNTRUSTED_FORWARDED_WARN_INTERVAL:
+            return
+        _forwarded_warned_at = now
+    log.warning("a request carried X-Forwarded-For but its peer %s is not in TRUSTED_PROXY_IPS, so the header is "
+                "ignored and the client address is the peer's. Behind a reverse proxy this makes all visitors share "
+                "one rate-limit bucket. Put the proxy's address or network into TRUSTED_PROXY_IPS (README, "
+                "\"Trusted proxy addresses\"). This message is logged at most once per hour.", peer or "unknown")
+
+
 def client_ip(request: Request) -> str:
     """Peer address; `X-Forwarded-For` is honored only when the peer is in TRUSTED_PROXY_IPS
     (the right-most address that is not itself a trusted proxy is used)."""
     peer = request.client.host if request.client else ""
-    trusted = get_settings().trusted_proxies
+    settings = get_settings()
+    trusted = settings.trusted_proxies
     if not trusted or not _is_trusted(peer, trusted):
+        if settings.is_production and request.headers.get("x-forwarded-for"):
+            _warn_untrusted_forwarded(peer)
         return peer or "unknown"
     forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
     for candidate in reversed(forwarded):
@@ -115,10 +145,10 @@ def current_user(request: Request) -> UserContext | None:
 
 
 def require_user(request: Request) -> UserContext:
-    """Dependency: a valid user session, else redirect to `/join`."""
+    """Dependency: a valid user session, else redirect to `/login`."""
     ctx = current_user(request)
     if ctx is None:
-        raise Redirect("/join")
+        raise Redirect("/login")
     return ctx
 
 
@@ -127,31 +157,15 @@ def forget_user(request: Request) -> None:
     request.state.user_ctx = None
 
 
-# ----- access gate ----------------------------------------------------------------------------
-def has_gate_cookie(request: Request) -> bool:
-    return gate.verify_gate_cookie(request.cookies.get(GATE_COOKIE))
-
-
-def has_gate(request: Request) -> bool:
-    """Gate passed: a valid `coffee_gate` cookie, or a valid user session."""
-    return has_gate_cookie(request) or current_user(request) is not None
-
-
-def require_gate(request: Request) -> None:
-    """Dependency for /register, /profiles and search: redirect to `/join` without the gate."""
-    if not has_gate(request):
-        raise Redirect("/join")
-
-
 # ----- CSRF -------------------------------------------------------------------------------------
 def csrf_binding(request: Request) -> tuple[str, str] | None:
-    """("user", session id) with a user session, else ("gate", gate cookie) if passed, else None."""
+    """("user", session id) with a user session, else ("anon", pre-session cookie) if the browser holds one."""
     ctx = current_user(request)
     if ctx is not None:
         return "user", str(ctx.session.id)
-    cookie = request.cookies.get(GATE_COOKIE)
-    if cookie and gate.verify_gate_cookie(cookie):
-        return "gate", cookie
+    cookie = request.cookies.get(CSRF_COOKIE)
+    if cookie and len(cookie) <= MAX_CSRF_COOKIE_LENGTH:
+        return "anon", cookie
     return None
 
 
@@ -159,6 +173,17 @@ def csrf_token_for(request: Request) -> str:
     """Token for the hidden `csrf_token` field of forms on this page ("" if no binding)."""
     binding = csrf_binding(request)
     return tokens.csrf_token(*binding) if binding else ""
+
+
+def form_csrf_token(request: Request) -> str:
+    """Like `csrf_token_for`, but a browser without a binding gets a fresh random `coffee_csrf` cookie (set by
+    `templating.render`) and a token for it. Use it on pages whose forms are submitted before sign-in."""
+    binding = csrf_binding(request)
+    if binding is None:
+        value = secrets.token_urlsafe(24)
+        request.state.new_csrf_cookie = value
+        binding = ("anon", value)
+    return tokens.csrf_token(*binding)
 
 
 async def verify_csrf_form(request: Request, scope: str, key: str | None) -> None:
@@ -169,7 +194,7 @@ async def verify_csrf_form(request: Request, scope: str, key: str | None) -> Non
 
 
 async def require_csrf(request: Request) -> None:
-    """Dependency for user-side POST forms (session- or gate-bound token)."""
+    """Dependency for user-side POST forms (token bound to the user session or the pre-session cookie)."""
     binding = await run_in_threadpool(csrf_binding, request)
     if binding is None:
         raise CSRFError()
@@ -194,8 +219,8 @@ def clear_session_cookie(response: Response) -> None:
     _clear(response, SESSION_COOKIE)
 
 
-def set_gate_cookie(response: Response) -> None:
-    _set(response, GATE_COOKIE, gate.make_gate_cookie(), gate.GATE_MAX_AGE)
+def set_csrf_cookie(response: Response, value: str) -> None:
+    _set(response, CSRF_COOKIE, value, CSRF_COOKIE_MAX_AGE)
 
 
 def set_pending_cookie(response: Response, pending_id: str) -> None:
