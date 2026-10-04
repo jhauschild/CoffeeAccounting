@@ -1,0 +1,72 @@
+{% extends "site/base.html" %}
+{% block title %}{{ t("site.overview.title") }} – {{ settings.app_title }}{% endblock %}
+{% block site_content %}
+<h1>{{ t("site.overview.title") }}</h1>
+<p class="muted">{{ t("site.overview.intro") }}</p>
+
+<section class="card" aria-labelledby="totals-h">
+  <h2 id="totals-h">{{ t("site.overview.totals") }}</h2>
+  <dl class="totals">
+    <dt>{{ t("site.overview.shots") }}</dt><dd>{{ totals.total_shots }}</dd>
+    <dt>{{ t("site.overview.consumed") }}</dt><dd>{{ totals.consumed_cents|money }}</dd>
+    <dt>{{ t("site.overview.paid") }}</dt><dd>{{ totals.paid_cents|money }}</dd>
+    <dt>{{ t("site.overview.owed") }}</dt><dd>{{ totals.owed_total_cents|money }}</dd>
+    <dt>{{ t("site.overview.credit") }}</dt><dd>{{ totals.credit_total_cents|money }}</dd>
+    <dt>{{ t("site.overview.price") }}</dt><dd>{% if totals.current_price_cents is not none %}{{ totals.current_price_cents|money }}{% else %}{{ t("site.overview.no_price") }}{% endif %}</dd>
+  </dl>
+</section>
+
+<section class="card" aria-labelledby="month-h">
+  <h2 id="month-h">{{ t("site.overview.month") }}</h2>
+  <dl class="totals">
+    <dt>{{ t("site.overview.month_shots") }}</dt><dd>{{ totals.month_shots }}</dd>
+    <dt>{{ t("site.overview.month_amount") }}</dt><dd>{{ totals.month_amount_cents|money }}</dd>
+  </dl>
+</section>
+
+<section class="card" aria-labelledby="trend-h">
+  <h2 id="trend-h">{{ t("site.overview.trend") }}</h2>
+  <p class="muted">{{ t("site.overview.trend_desc") }}</p>
+  <svg class="trend" viewBox="0 0 {{ chart.width }} {{ chart.height }}" role="img" aria-label="{{ t('site.overview.trend_alt') }}" preserveAspectRatio="xMidYMid meet">
+    <line class="trend-axis" x1="0" y1="{{ chart.base }}" x2="{{ chart.width }}" y2="{{ chart.base }}"></line>
+    {% for bar in chart.bars %}
+    <rect class="trend-bar{{ ' is-current' if loop.last else '' }}" x="{{ bar.x }}" y="{{ bar.y }}" width="{{ chart.bar_width }}" height="{{ bar.height }}"><title>{{ t("site.overview.trend_bar", month=bar.label, shots=bar.shots) }}</title></rect>
+    <text class="trend-label" x="{{ bar.cx }}" y="{{ chart.label_y }}" text-anchor="middle">{{ bar.short }}</text>
+    {% endfor %}
+  </svg>
+  <details class="trend-table" open>
+    <summary>{{ t("site.overview.trend_table") }}</summary>
+    <div class="table-wrap"><table>
+      <thead><tr><th scope="col">{{ t("site.overview.col_month") }}</th><th scope="col" class="num">{{ t("site.overview.col_shots") }}</th><th scope="col" class="num">{{ t("site.overview.col_amount") }}</th></tr></thead>
+      <tbody>
+      {% for bar in chart.bars %}
+        <tr><th scope="row">{{ bar.label }}</th><td class="num">{{ bar.shots }}</td><td class="num">{{ bar.amount_cents|money }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </details>
+</section>
+
+<section class="card" aria-labelledby="chairs-h">
+  <h2 id="chairs-h">{{ t("site.overview.chairs") }}</h2>
+  {% if chairs %}
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th scope="col">{{ t("site.overview.col_chair") }}</th><th scope="col" class="num">{{ t("site.overview.col_members") }}</th>
+      <th scope="col" class="num">{{ t("site.overview.col_shots") }}</th><th scope="col" class="num">{{ t("site.overview.col_owed") }}</th>
+      <th scope="col" class="num">{{ t("site.overview.col_credit") }}</th>
+    </tr></thead>
+    <tbody>
+    {% for c in chairs %}
+      <tr>
+        <th scope="row"><a href="/overview/people?chair={{ c.id }}">{{ c.name }}</a></th>
+        <td class="num">{{ c.members }}</td><td class="num">{{ c.shots }}</td>
+        <td class="num">{{ c.owed_cents|money }}</td><td class="num">{{ c.credit_cents|money }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">{{ t("site.overview.chairs_empty") }}</p>{% endif %}
+  <p><a href="/overview/people">{{ t("site.overview.all_people") }}</a></p>
+</section>
+{% endblock %}

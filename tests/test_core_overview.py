@@ -383,6 +383,9 @@ def test_sentinel_nothing_sensitive_in_any_overview_value(db, chair, other_chair
         *overview.chairs_overview(db, now=NOW),
         *overview.price_history(db),
     ]
+    choices = overview.chair_choices(db, now=NOW)  # plain (id, short name) pairs
+    assert choices and all(len(c) == 2 and isinstance(c[1], str) for c in choices)
+    assert not any(sentinel in repr(choices) for sentinel in S.values())
     assert len(overview.people(db, now=NOW).rows) >= 4
 
     def walk(obj):
