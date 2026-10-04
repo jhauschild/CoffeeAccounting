@@ -417,6 +417,19 @@ def person_history(db: Session, user_id: uuid.UUID, now: datetime | None = None)
     )
 
 
+def can_edit_balance(db: Session, viewer_user_id: uuid.UUID, person: PersonHistory) -> bool:
+    """Whether the signed-in ACCOUNT `viewer_user_id` is linked to an active group admin (role chair) of the
+    person's own chair, so the person page may offer the "Edit balance" link. Nobody gets the link on their
+    own page (the ledger refuses own-account postings). Head admins have no user account and use /admin."""
+    if viewer_user_id == person.id:
+        return False
+    row = db.execute(
+        select(AdminUser.id, User.chair_id).join(User, User.id == AdminUser.user_id)
+        .where(AdminUser.user_id == viewer_user_id, AdminUser.role == "chair", AdminUser.active.is_(True))
+    ).first()
+    return row is not None and row.chair_id == person.chair_id
+
+
 # ----- chairs -------------------------------------------------------------------------------
 def chairs_overview(db: Session, now: datetime | None = None) -> tuple[ChairOverview, ...]:
     """Per chair: members, current group admins, owed and credit totals and the group money

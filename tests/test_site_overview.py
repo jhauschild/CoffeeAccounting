@@ -113,12 +113,14 @@ def test_revoked_and_deactivated_sessions_are_anonymous(client, db, viewer, logi
 
 def test_route_enumeration_all_site_routes_are_get_only_and_gated(client, db):
     routes = [r for r in routes_overview.router.routes]
-    assert {r.path for r in routes} == {"/overview", "/overview/people"}
+    assert {r.path for r in routes} == {"/overview", "/overview/people", "/overview/people/{person_id}",
+                                        "/overview/chairs", "/overview/prices"}
     for r in routes:
         assert r.methods == {"GET"}, r.path  # nothing here changes state
-        resp = client.get(r.path, follow_redirects=False)
+        path = r.path.replace("{person_id}", str(uuid.uuid4()))
+        resp = client.get(path, follow_redirects=False)
         assert resp.status_code == 303 and resp.headers["location"] == "/login", r.path
-        assert client.post(r.path, follow_redirects=False).status_code == 405
+        assert client.post(path, follow_redirects=False).status_code == 405
 
 
 def test_routes_are_mounted_in_the_app(client):

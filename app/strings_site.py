@@ -1,6 +1,4 @@
-"""Strings for the open site: `/overview` and `/overview/people` (task 5.1). Keys: "site.*".
-
-The navigation labels of the pages that task 5.2 adds (chairs, prices, person history) already live here."""
+"""Strings for the open site: `/overview*` (tasks 5.1 and 5.2). Keys: "site.*"."""
 
 STRINGS: dict[str, str] = {
     # Navigation
@@ -70,4 +68,51 @@ STRINGS: dict[str, str] = {
     "site.people.next": "Next page",
     "site.people.pager": "Pages",
     "site.people.inactive_hint": "Inactive accounts are listed only while they still have a balance.",
+    # Person page (task 5.2)
+    "site.person.back": "All people",
+    "site.person.chair": "Chair: {chair}",
+    "site.person.balance": "Balance",
+    "site.person.shots_month": "Shots this month",
+    "site.person.shots_total": "Shots in total",
+    "site.person.edit_balance": "Edit balance",
+    "site.person.consumption": "Coffee history",
+    "site.person.consumption_empty": "No coffee recorded yet.",
+    "site.person.payments": "Payment history",
+    "site.person.payments_empty": "No payments recorded yet.",
+    "site.person.col_date": "Date",
+    "site.person.col_shots": "Shots",
+    "site.person.col_price": "Price per shot",
+    "site.person.col_amount": "Amount",
+    "site.person.col_kind": "Type",
+    "site.person.kind_coffee": "Coffee",
+    "site.person.kind_reversal": "Reversal",
+    "site.person.kind_reversed": "Reversed",
+    "site.person.kind_payment": "Payment",
+    "site.person.kind_payback": "Paid back",
+    "site.person.reversal_hint": "A reversal cancels an earlier coffee: its shots and amount are taken off the balance.",
+    "site.person.payback_hint": "\"Paid back\" is money that was returned to the person: it increases what they owe.",
+    "site.person.inactive_note": "This account is inactive and is shown only while it still has a balance.",
+    # Chairs page
+    "site.chairs.title": "Chairs",
+    "site.chairs.intro": "People, group admins and group money per chair.",
+    "site.chairs.members": "People",
+    "site.chairs.group_admins": "Group admins",
+    "site.chairs.no_admins": "None",
+    "site.chairs.owed": "Owed by people",
+    "site.chairs.credit": "Credit held by people",
+    "site.chairs.collected": "Collected by the group",
+    "site.chairs.handed_over": "Handed over",
+    "site.chairs.held": "Still held by the group",
+    "site.chairs.negative": "More handed over than collected",
+    "site.chairs.see_people": "See the people of this chair",
+    "site.chairs.empty": "No chairs yet.",
+    "site.chairs.col_chair": "Chair",
+    # Prices page
+    "site.prices.title": "Prices",
+    "site.prices.intro": "Price per shot over time. The newest price that has taken effect applies to new coffees.",
+    "site.prices.col_from": "Effective from",
+    "site.prices.col_price": "Price per shot",
+    "site.prices.current": "current",
+    "site.prices.scheduled": "scheduled",
+    "site.prices.empty": "No price has been set yet.",
 }

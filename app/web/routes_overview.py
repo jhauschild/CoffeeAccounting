@@ -1,4 +1,4 @@
-"""Open site: `/overview` and `/overview/people` (PLAN-v2 section 3, A10/A11; task 5.1).
+"""Open site: `/overview*` (PLAN-v2 section 3, A10/A11; tasks 5.1 and 5.2).
 
 Read-only and server-rendered; every number comes from `app.services.overview`. A valid user session is
 required. An anonymous visitor gets a `view_site` pending action (no redirect parameter; the target is fixed in
@@ -20,6 +20,9 @@ from sqlalchemy.orm import Session
 
 from app.db import write_session
 from app.services import overview, pending
+from app.services.errors import NotFound
+from app.strings import t
+from app.timeutil import format_local, utcnow
 from app.web import deps
 from app.web.templating import render
 
@@ -162,3 +165,72 @@ def people_page(request: Request, q: str = "", chair: str = "", sort: str = "nam
                       if result.page < result.pages else None),
     }
     return _page(request, "site/people.html", context, "people")
+
+
+# ----- task 5.2: person, chairs, prices ---------------------------------------------------------------
+DATE_FORMAT = "%Y-%m-%d %H:%M"
+
+
+def _not_found(request: Request) -> Response:
+    """Plain 404 (same page for unknown, malformed, merged and hidden ids), never cached."""
+    response = render(request, "error.html", {"status_code": 404, "message": t("error.not_found"), "csrf_token": ""},
+                      status_code=404)
+    response.headers["Cache-Control"] = CACHE_CONTROL
+    return response
+
+
+@router.get("/overview/people/{person_id}")
+def person_page(request: Request, person_id: str, db: Session = Depends(deps.get_read_db)):
+    ctx = deps.current_user(request)
+    if ctx is None:
+        return _anonymous(request)
+    pid = deps.parse_uuid(person_id)
+    if pid is None:
+        return _not_found(request)
+    try:
+        person = overview.person_history(db, pid)
+    except NotFound:
+        return _not_found(request)
+    if person.id != pid:  # an id that was merged into another profile is not a person of its own
+        return _not_found(request)
+    # Reversals and paid-back money are shown as words with absolute amounts: no minus sign on the site.
+    consumption = [{
+        "date": format_local(c.date, DATE_FORMAT), "shots": abs(c.shots), "price_cents": c.unit_price_cents,
+        "amount_cents": abs(c.amount_cents),
+        "kind": "reversal" if c.is_reversal else ("reversed" if c.is_reversed else "coffee"),
+    } for c in person.consumption]
+    payments = [{"date": format_local(p.date, DATE_FORMAT), "amount_cents": abs(p.amount_cents),
+                 "kind": "payback" if p.amount_cents < 0 else "payment"} for p in person.payments]
+    context = {
+        "person": {"id": person.id, "name": person.display_name, "chair": person.chair_name,
+                   "inactive": person.inactive, "label": person.balance_label,
+                   "shots_month": _nn(person.shots_month), "shots_total": _nn(person.shots_total)},
+        "consumption": consumption, "payments": payments,
+        "can_edit": overview.can_edit_balance(db, ctx.user.id, person),
+    }
+    return _page(request, "site/person.html", context, "people")
+
+
+@router.get("/overview/chairs")
+def chairs_page(request: Request, db: Session = Depends(deps.get_read_db)):
+    if deps.current_user(request) is None:
+        return _anonymous(request)
+    chairs = [{
+        "id": c.chair_id, "name": c.name, "full_name": c.full_name, "members": c.members,
+        "admins": list(c.group_admins), "owed_cents": _nn(c.owed_cents), "credit_cents": _nn(c.credit_cents),
+        "collected_cents": c.collected_cents, "handed_over_cents": c.handed_over_cents, "held_cents": c.held_cents,
+    } for c in overview.chairs_overview(db)]
+    return _page(request, "site/chairs.html", {"chairs": chairs}, "chairs")
+
+
+@router.get("/overview/prices")
+def prices_page(request: Request, db: Session = Depends(deps.get_read_db)):
+    if deps.current_user(request) is None:
+        return _anonymous(request)
+    now = utcnow()
+    points = overview.price_history(db)  # newest first
+    current = next((p for p in points if p.effective_from <= now), None)
+    rows = [{"from": format_local(p.effective_from, DATE_FORMAT), "price_cents": p.price_per_shot_cents,
+             "state": "scheduled" if p.effective_from > now else ("current" if p is current else "")}
+            for p in points]
+    return _page(request, "site/prices.html", {"rows": rows}, "prices")

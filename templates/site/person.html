@@ -1,0 +1,63 @@
+{% extends "site/base.html" %}
+{% from "site/_macros.html" import balance %}
+{% block title %}{{ person.name }} – {{ settings.app_title }}{% endblock %}
+{% block site_content %}
+<p><a href="/overview/people">{{ t("site.person.back") }}</a></p>
+<h1>{{ person.name }}{% if person.inactive %} <span class="badge">{{ t("site.inactive") }}</span>{% endif %}</h1>
+<p class="muted">{{ t("site.person.chair", chair=person.chair) }}</p>
+{% if person.inactive %}<p class="muted">{{ t("site.person.inactive_note") }}</p>{% endif %}
+
+<section class="card" aria-labelledby="summary-h">
+  <h2 id="summary-h">{{ t("site.person.balance") }}</h2>
+  <dl class="totals">
+    <dt>{{ t("site.person.balance") }}</dt><dd>{{ balance(person.label) }}</dd>
+    <dt>{{ t("site.person.shots_month") }}</dt><dd>{{ person.shots_month }}</dd>
+    <dt>{{ t("site.person.shots_total") }}</dt><dd>{{ person.shots_total }}</dd>
+  </dl>
+  {% if can_edit %}<p><a class="button button-secondary" href="/admin/users/{{ person.id }}">{{ t("site.person.edit_balance") }}</a></p>{% endif %}
+</section>
+
+<section class="card" aria-labelledby="cons-h">
+  <h2 id="cons-h">{{ t("site.person.consumption") }}</h2>
+  {% if consumption %}
+  <div class="table-wrap"><table class="history">
+    <thead><tr>
+      <th scope="col">{{ t("site.person.col_date") }}</th><th scope="col" class="num">{{ t("site.person.col_shots") }}</th>
+      <th scope="col" class="num">{{ t("site.person.col_price") }}</th><th scope="col" class="num">{{ t("site.person.col_amount") }}</th>
+      <th scope="col">{{ t("site.person.col_kind") }}</th>
+    </tr></thead>
+    <tbody>
+    {% for c in consumption %}
+      <tr class="kind-{{ c.kind }}">
+        <th scope="row">{{ c.date }}</th>
+        <td class="num">{{ c.shots }}</td><td class="num">{{ c.price_cents|money }}</td><td class="num">{{ c.amount_cents|money }}</td>
+        <td>{{ t("site.person.kind_" ~ c.kind) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted">{{ t("site.person.reversal_hint") }}</p>
+  {% else %}<p class="muted">{{ t("site.person.consumption_empty") }}</p>{% endif %}
+</section>
+
+<section class="card" aria-labelledby="pay-h">
+  <h2 id="pay-h">{{ t("site.person.payments") }}</h2>
+  {% if payments %}
+  <div class="table-wrap"><table class="history">
+    <thead><tr>
+      <th scope="col">{{ t("site.person.col_date") }}</th><th scope="col" class="num">{{ t("site.person.col_amount") }}</th>
+      <th scope="col">{{ t("site.person.col_kind") }}</th>
+    </tr></thead>
+    <tbody>
+    {% for p in payments %}
+      <tr class="kind-{{ p.kind }}">
+        <th scope="row">{{ p.date }}</th><td class="num">{{ p.amount_cents|money }}</td>
+        <td>{{ t("site.person.kind_" ~ p.kind) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted">{{ t("site.person.payback_hint") }}</p>
+  {% else %}<p class="muted">{{ t("site.person.payments_empty") }}</p>{% endif %}
+</section>
+{% endblock %}

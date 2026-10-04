@@ -1,0 +1,25 @@
+{% extends "site/base.html" %}
+{% block title %}{{ t("site.chairs.title") }} – {{ settings.app_title }}{% endblock %}
+{% block site_content %}
+<h1>{{ t("site.chairs.title") }}</h1>
+<p class="muted">{{ t("site.chairs.intro") }}</p>
+
+{% for c in chairs %}
+<section class="card chair" aria-labelledby="chair-{{ c.id }}">
+  <h2 id="chair-{{ c.id }}">{{ c.name }}</h2>
+  {% if c.full_name != c.name %}<p class="muted">{{ c.full_name }}</p>{% endif %}
+  <dl class="totals">
+    <dt>{{ t("site.chairs.members") }}</dt><dd class="chair-members">{{ c.members }}</dd>
+    <dt>{{ t("site.chairs.group_admins") }}</dt><dd class="chair-admins">{% if c.admins %}{{ c.admins|join(", ") }}{% else %}{{ t("site.chairs.no_admins") }}{% endif %}</dd>
+    <dt>{{ t("site.chairs.owed") }}</dt><dd class="chair-owed">{{ c.owed_cents|money }}</dd>
+    <dt>{{ t("site.chairs.credit") }}</dt><dd class="chair-credit">{{ c.credit_cents|money }}</dd>
+    <dt>{{ t("site.chairs.collected") }}</dt><dd class="chair-collected">{{ c.collected_cents|money }}</dd>
+    <dt>{{ t("site.chairs.handed_over") }}</dt><dd class="chair-handed">{{ c.handed_over_cents|money }}</dd>
+    <dt>{{ t("site.chairs.held") }}</dt><dd class="chair-held">{{ (c.held_cents|abs)|money }}{% if c.held_cents < 0 %} <span class="badge">{{ t("site.chairs.negative") }}</span>{% endif %}</dd>
+  </dl>
+  <p><a href="/overview/people?chair={{ c.id }}">{{ t("site.chairs.see_people") }}</a></p>
+</section>
+{% else %}
+<p class="card muted">{{ t("site.chairs.empty") }}</p>
+{% endfor %}
+{% endblock %}
