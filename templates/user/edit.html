@@ -11,6 +11,14 @@
       <input id="display_name" name="display_name" type="text" required maxlength="{{ name_max }}" value="{{ values.display_name or '' }}" autocomplete="name">
       {% if errors.name %}<p class="field-error" role="alert">{{ t(errors.name, max=name_max) }}</p>{% endif %}
     </div>
+    {% if chair_locked %}
+    <div class="field">
+      <p class="muted">{{ t("user.register.chair") }}</p>
+      <p>{{ current_chair.short_name }} – {{ current_chair.full_name }}</p>
+      <p class="muted">{{ t("user.edit.chair_fixed") }}</p>
+      {% if errors.chair %}<p class="field-error" role="alert">{{ t(errors.chair) }}</p>{% endif %}
+    </div>
+    {% else %}
     <div class="field">
       <label for="chair_id">{{ t("user.register.chair") }}</label>
       <select id="chair_id" name="chair_id" required>
@@ -21,6 +29,7 @@
       <p class="muted">{{ t("user.edit.chair_note") }}</p>
       {% if errors.chair %}<p class="field-error" role="alert">{{ t(errors.chair) }}</p>{% endif %}
     </div>
+    {% endif %}
     <button type="submit" class="button-block">{{ t("user.edit.save") }}</button>
   </form>
   <p><a href="/account">{{ t("user.edit.cancel") }}</a></p>

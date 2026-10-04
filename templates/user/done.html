@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "user/_totals.html" import totals_list %}
+{% from "user/_totals.html" import headline_block, totals_list %}
 {% block title %}{{ t("user.done.title") }} – {{ settings.app_title }}{% endblock %}
 {% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
 {% block content %}
@@ -15,6 +15,7 @@
 </section>
 <section class="card">
   <h2>{{ t("user.totals.title") }}</h2>
+  {{ headline_block(headline, month_shots) }}
   {{ totals_list(totals) }}
 </section>
 {% if event.can_undo %}
@@ -26,5 +27,8 @@
   </form>
 </section>
 {% endif %}
-<p><a class="button button-secondary button-block" href="/account">{{ t("user.done.account") }}</a></p>
+<p class="stack-links">
+  <a class="button button-secondary button-block" href="/account">{{ t("user.done.account") }}</a>
+  <a class="button button-secondary button-block" href="/overview">{{ t("user.done.site") }}</a>
+</p>
 {% endblock %}
