@@ -21,15 +21,15 @@ Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
 | 2.5 | Login, forgot/reset, limits, pending-action change, gate removal | H | 2.3 | done | login, recovery, gate removed, minimal routes; e2e updated |
 | R4 | M4 review of 1.3, 1.4, 2.2-2.5 (read-only, writes docs/status/review-M4.md) | H | 2.5 | done | 0 critical/high, 5 medium, 8 low; see review-M4.md |
 | F4 | Fix M4-review findings M1-M5, L3-L6, L8 (see review-M4.md) | H | R4 | done | M1-M5, L3-L6, L8 fixed; 49 tests; see task-F4.md |
-| 3.1 | User pages and strings for 2.3-2.5 | L | 2.5 | doing | |
+| 3.1 | User pages and strings for 2.3-2.5 | L | 2.5 | done | member and guest pages, approve/reject, unavailable state, privacy; 45 tests |
 | 3.2 | Scan result page, account page | L | 1.3 | done | scan result and account pages, change_password; 28 tests |
 | 4.1 | Admin login for group admins, TOTP enrolment | H | 1.1 | done | v2 admin login, TOTP enrolment, stepup_until; suite green |
 | 4.2 | Step-up dependency and confirm pages | H | 4.1 | done | step-up confirm flow, require_stepup, 40 tests |
 | 4.3 | Role button, /admin/admins, sponsor reassign UI | L | 4.1 | done | roles.py, /admin/admins, sponsor reassign UI; 28 tests |
 | 4.4 | /admin/groups, remittances UI, set balance, CSV | H | 4.2, 1.4 | done | /admin/groups, remittances, set balance, CSV; 79 tests |
-| 4.5 | CLI setup commands, QR page with 4 codes, dashboard tiles | L | 2.2 | todo | |
-| 5.1 | /overview and /overview/people | L | 1.5 | doing | |
-| 5.2 | Person page, chairs, prices, privacy sentinel test | H | 5.1 | todo | |
+| 4.5 | CLI setup commands, QR page with 4 codes, dashboard tiles | L | 2.2 | doing | |
+| 5.1 | /overview and /overview/people | L | 1.5 | done | /overview and /overview/people; 37 tests |
+| 5.2 | Person page, chairs, prices, privacy sentinel test | H | 5.1 | doing | |
 | 6.1 | .env.example, compose secrets volume, backup exclusion, README, privacy, smoke | L | 2-5 | todo | |
 | 6.2 | Real docker compose up check | L | 6.1 | todo | |
 | 7.1 | Playwright e2e rewrite | L | 3, 5 | todo | |
