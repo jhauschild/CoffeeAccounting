@@ -234,6 +234,32 @@ def test_every_svg_embeds_exactly_its_url(kind, monkeypatch, tmp_path):
     assert parse_svg_matrix(svg) == expected
 
 
+@pytest.mark.parametrize("with_label", [True, False])
+@pytest.mark.parametrize("kind", KINDS)
+def test_svg_module_matrix_equals_the_segno_matrix_with_and_without_label(kind, with_label, monkeypatch):
+    """L-9: the dark modules drawn by `qr_svg` (path runs, quiet zone of 4, label offset when a label is shown)
+    are exactly the segno matrix of the URL, for every one of the four URLs, standalone or inline."""
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://coffee.example.org")
+    reload_settings()
+    url = exports.qr_urls()[kind]
+    expected = [[bool(v) for v in row] for row in segno.make(url, error="m", micro=False).matrix]
+    for standalone in (True, False):
+        svg = exports.qr_svg(url, kind.upper() if with_label else None, standalone=standalone)
+        assert parse_svg_matrix(svg, label_height=12 if with_label else 0) == expected
+        assert svg.count("<path") == 1 and ("xmlns=" in svg) == standalone
+        assert (f">{kind.upper()}<" in svg) == with_label
+
+
+def test_the_four_codes_are_four_different_matrices(monkeypatch):
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://coffee.example.org")
+    reload_settings()
+    urls = exports.qr_urls()
+    assert len(set(urls.values())) == 4
+    matrices = {kind: tuple(map(tuple, parse_svg_matrix(exports.qr_svg(url, None), label_height=0)))
+                for kind, url in urls.items()}
+    assert len(set(matrices.values())) == 4
+
+
 @pytest.mark.parametrize("kind", KINDS)
 def test_svg_decodes_with_opencv_when_available(kind, monkeypatch, tmp_path):
     cv2 = pytest.importorskip("cv2")

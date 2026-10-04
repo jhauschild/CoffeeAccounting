@@ -65,7 +65,8 @@ def world(db, chair, other_chair):
     ledger.admin_reverse_event(db, admin=head, event_id=rev.id, note=S["consnote"], ip=S["ip"])
     ledger.add_adjustment(db, admin=head, user_id=member.id, quantity=1, note=S["consnote"], ip=S["ip"])
     ledger.add_payment(db, admin=gadmin, user_id=member.id, amount_cents=100, note=S["paynote"], ip=S["ip"])
-    ledger.add_payment(db, admin=gadmin, user_id=member.id, amount_cents=-20, note=S["paynote"], ip=S["ip"])
+    # paid back above credit: only a head admin may book it (a group admin is capped at the person's credit)
+    ledger.add_payment(db, admin=head, user_id=member.id, amount_cents=-20, note=S["paynote"], ip=S["ip"])
     ledger.add_payment(db, admin=head, user_id=guest.id, amount_cents=25, note=S["paynote"], ip=S["ip"])
     ledger.set_balance(db, admin=head, user_id=other.id, target_balance_cents=-300, idempotency_key="sent-sb",
                        note=S["recnote"])

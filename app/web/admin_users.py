@@ -135,7 +135,9 @@ def user_detail(request: Request, uid: uuid.UUID = Depends(ad.admin_user_access)
         chairs = [c for c in stats.visible_chairs(db, ctx.admin)] if not ctx.is_global else \
             [c for c in stats.visible_chairs(db, ctx.admin) if c.active]
         unit = ledger.adjustment_default_amount(db, 1)  # current price per shot (None: no price yet)
-        uncorrected = [p for p in detail.payments if not p.corrected]
+        # Only payments this admin may correct (ledger rule: the collector or a head admin; bookkeeping: head only).
+        uncorrected = [p for p in detail.payments if not p.corrected
+                       and (ctx.is_global or p.payment.collector_admin_id == ctx.admin.id)]
         return ad.page(request, ctx, "admin/user_detail.html",
                        {"detail": detail, "chairs": chairs, "unit_cents": unit, "note_max": NOTE_MAX,
                         "unit_price_plain": format_amount(unit) if unit is not None else "",

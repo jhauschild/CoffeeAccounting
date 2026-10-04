@@ -35,6 +35,7 @@ from app.services.errors import (
     InvalidInput,
     NoPriceConfigured,
     NotFound,
+    PaybackExceedsCredit,
     RateLimited,
     UndoNotAllowed,
     UserInactive,
@@ -421,6 +422,12 @@ def add_payment(
     Idempotent on `idempotency_key`: if a payment with this key exists it is returned and
     nothing is inserted (a key reused for a different user or amount raises `Conflict`).
     A group admin cannot post to their own linked account (`Forbidden`).
+
+    Paid-back rule: a NEGATIVE cash payment that is not a correction may be recorded by a group
+    admin only up to the target's current credit (balance below zero, effective-user aware;
+    `PaybackExceedsCredit`, an `InvalidAmount`, otherwise), so paid-back entries cannot cover cash that was never handed
+    over. Head admins may exceed it; `groups.over_credit_paybacks` flags every such entry. A
+    correction of a collected payment is exempt (it is bounded by the payment it corrects).
     """
     now = _now(now)
     if kind not in PAYMENT_KINDS:
@@ -435,6 +442,10 @@ def add_payment(
         existing = _payment_by_key(db, key)
         if existing is not None:
             return _same_payment_or_conflict(db, existing, user.id, amount_cents)
+    if kind == "cash" and amount_cents < 0 and correction_of_id is None and admin.role != "global":
+        credit = max(0, -get_totals(db, user.id).balance_cents)
+        if -amount_cents > credit:
+            raise PaybackExceedsCredit("a paid-back amount may not exceed the person's current credit")
     collector_id: uuid.UUID | None = admin.id if kind == "cash" else None
     correction_chair_id = None
     if correction_of_id is not None:

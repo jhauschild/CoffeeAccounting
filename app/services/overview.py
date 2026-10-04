@@ -151,6 +151,7 @@ class HistoryConsumption:
 class HistoryPayment:
     date: datetime  # UTC
     amount_cents: int  # negative: money paid back
+    is_bookkeeping: bool = False  # a head admin's balance correction (set balance): no money moved
 
 
 @dataclass(frozen=True)
@@ -406,9 +407,11 @@ def person_history(db: Session, user_id: uuid.UUID, now: datetime | None = None)
         for c in cons_rows
     )
     pay_rows = db.execute(
-        select(pe.created_at, pe.amount_cents).where(pe.user_id.in_(members)).order_by(pe.created_at.desc(), pe.id.desc())
+        select(pe.created_at, pe.amount_cents, pe.kind).where(pe.user_id.in_(members))
+        .order_by(pe.created_at.desc(), pe.id.desc())
     ).all()
-    payments = tuple(HistoryPayment(date=ensure_utc(p.created_at), amount_cents=int(p.amount_cents)) for p in pay_rows)
+    payments = tuple(HistoryPayment(date=ensure_utc(p.created_at), amount_cents=int(p.amount_cents),
+                                    is_bookkeeping=p.kind == "bookkeeping") for p in pay_rows)
     return PersonHistory(
         id=r.id, display_name=_name(r.display_name, r.rn), chair_id=r.chair_id, chair_name=r.chair_name,
         inactive=r.status != "active", shots_month=int(r.month_shots), shots_total=int(r.shots),

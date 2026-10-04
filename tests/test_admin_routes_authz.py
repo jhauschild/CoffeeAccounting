@@ -127,20 +127,72 @@ def test_every_post_route_is_allow_listed_or_requires_stepup():
     assert not (NON_BALANCE_POSTS & PREVIEW_POSTS) and not (NON_BALANCE_POSTS & STEPUP_POSTS)
 
 
+BALANCE_SERVICE_NAMES = frozenset({"add_payment", "add_adjustment", "admin_reverse_event", "merge_users",
+                                   "set_balance", "record_remittance"})
+# Modules under app/web that may reference the balance-changing services. EMPTY on purpose: the only executor is
+# app/services/stepup.py (a service module behind `require_stepup`, not a web module), so it is not scanned here.
+WEB_ALLOW_LIST: frozenset[str] = frozenset()
+_SERVICE_MODULES = ("ledger", "users", "groups")
+
+
+def balance_service_references(source: str) -> list[str]:
+    """Every way a module can reach a balance-changing service function, found on the AST (not on call sites):
+    `from x import add_payment [as _ap]`, `import x as y`-style module attribute access (`ledger.add_payment`,
+    `y.ledger.set_balance`), a bare name, `getattr(mod, "add_payment")`, and star imports from the service modules. Aliasing cannot hide an import because the imported NAME is checked."""
+    import ast
+
+    hits: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in BALANCE_SERVICE_NAMES:
+                    hits.append(f"line {node.lineno}: imports {alias.name} (as {alias.asname or alias.name})")
+                elif alias.name == "*" and (node.module or "").rsplit(".", 1)[-1] in _SERVICE_MODULES:
+                    hits.append(f"line {node.lineno}: star import from {node.module}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.rsplit(".", 1)[-1] in BALANCE_SERVICE_NAMES:
+                    hits.append(f"line {node.lineno}: imports {alias.name}")
+        elif isinstance(node, ast.Attribute) and node.attr in BALANCE_SERVICE_NAMES:
+            hits.append(f"line {node.lineno}: attribute access .{node.attr}")
+        elif isinstance(node, ast.Name) and node.id in BALANCE_SERVICE_NAMES:
+            hits.append(f"line {node.lineno}: name {node.id}")
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"
+              and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)
+              and node.args[1].value in BALANCE_SERVICE_NAMES):
+            hits.append(f"line {node.lineno}: getattr(..., {node.args[1].value!r})")
+    return hits
+
+
 def test_balance_services_are_only_called_from_the_step_up_registry():
-    """No /admin route module may call a balance-changing service function directly: the only executor is
-    app/services/stepup.py behind `require_stepup`."""
-    import re
+    """No app/web module may import or reference a balance-changing service function, under any alias: the only
+    executor is app/services/stepup.py behind `require_stepup` (a service, not a web module, hence not scanned)."""
     from pathlib import Path
     from app.services import stepup
-    names = "|".join(("add_payment", "add_adjustment", "admin_reverse_event", "merge_users", "set_balance",
-                      "record_remittance"))
-    pattern = re.compile(rf"\b(?:{names})\s*\(")
     web = Path(__file__).resolve().parent.parent / "app" / "web"
-    offenders = [f.name for f in sorted(web.glob("*.py")) if pattern.search(f.read_text())]
-    assert offenders == [], f"balance-changing service calls outside the step-up registry: {offenders}"
+    files = sorted(web.rglob("*.py"))
+    assert files, "the scan found no web modules"
+    offenders = {f.name: hits for f in files if f.name not in WEB_ALLOW_LIST
+                 and (hits := balance_service_references(f.read_text()))}
+    assert offenders == {}, f"balance-changing services referenced outside the step-up registry: {offenders}"
     assert set(stepup.REGISTRY) >= {"payment", "adjustment", "reversal", "merge", "set_balance", "remittance",
                                     "remittance_correction"}
+    assert (Path(stepup.__file__).resolve().parent.name, Path(stepup.__file__).name) == ("services", "stepup.py")
+
+
+def test_the_balance_scan_catches_aliased_imports_and_attribute_access():
+    aliased = "from app.services.ledger import add_payment as _ap\n\ndef f(db):\n    return _ap(db)\n"
+    assert balance_service_references(aliased)
+    assert balance_service_references("from app.services import ledger as L\nL.set_balance(1)\n")
+    assert balance_service_references("import app.services.groups as g\ng.record_remittance(1)\n")
+    assert balance_service_references("from app.services.users import *\n")
+    assert balance_service_references("fn = getattr(mod, 'merge_users')\n")
+    assert balance_service_references("from app.services.ledger import admin_reverse_event\n")
+    assert balance_service_references("add_adjustment(db, 1)\n")
+    # unrelated code and read-only service functions are fine
+    assert not balance_service_references("from app.services.ledger import get_totals, recent_payments\n"
+                                          "x = get_totals(1)\n")
+    assert not balance_service_references("from app.services import stepup\nstepup.authorise(1)\n")
 
 
 def test_route_list_matches_the_real_app(app):

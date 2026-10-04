@@ -35,6 +35,7 @@ USERNAME_PROBE = ("username_probe", 10, 15 * 60)       # "username taken" answer
 RESET_USER = ("reset_user", 3, 60 * 60)                # reset requests per username
 RESET_IP = ("reset_ip", 10, 60 * 60)                   # reset requests per IP
 RESET_RECIPIENT = ("reset_rcpt", 6, 60 * 60)           # reset mails per recipient address (hashed)
+OVERVIEW_ANON = ("overview_anon", 30, 10 * 60)         # pending rows created by cookie-less /overview* visits, per IP
 ADMIN_LOGIN_FAILURES = ("admin_login", 5, 15 * 60)     # per username+IP
 ADMIN_LOGIN_FAILURES_IP = ("admin_login_ip", 15, 15 * 60)  # per IP, across usernames
 

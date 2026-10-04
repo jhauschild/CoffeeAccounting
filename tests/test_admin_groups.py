@@ -265,7 +265,8 @@ def test_former_group_admin_is_listed_while_non_zero(head, ga_id, alice):
     assert "Gina Group" in html and "former group admin" in html
     r = remit(head, ga_id, "10")  # a former group admin can still hand over what they held
     assert r.status_code == 303 and "msg=remittance_recorded" in r.headers["location"]
-    assert "Gina Group" not in head[0].get("/admin/groups").text.split("Received entries")[0]
+    # L-4: settled but still listed (greyed "former group admin") so the old remittance stays correctable
+    assert "Gina Group" in head[0].get("/admin/groups").text.split("Received entries")[0]
 
 
 # ----- authorisation ---------------------------------------------------------------------------------------

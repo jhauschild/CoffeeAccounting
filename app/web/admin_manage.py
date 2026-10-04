@@ -14,6 +14,7 @@ from app.models import AdminUser, ConsumptionEvent, User
 from app.money import parse_money
 from app.services import chairs as chair_service
 from app.services import exports, prices, stats
+from app.services.authz import admin_label
 from app.services.errors import InvalidInput, NotFound, ServiceError
 from app.timeutil import parse_iso_datetime
 from app.web import admin_deps as ad
@@ -87,7 +88,7 @@ def chair_active(request: Request, chair_id: str, active: str = Form("", max_len
 def prices_page(request: Request, ctx: ad.AdminContext = Depends(ad.require_global_admin)):
     with read_session() as db:
         history = prices.list_prices(db)
-        names = {a.id: a.username for a in db.scalars(select(AdminUser))}
+        names = {a.id: admin_label(a) for a in db.scalars(select(AdminUser))}
         return ad.page(request, ctx, "admin/prices.html",
                        {"current": prices.get_price_in_effect(db), "history": history, "names": names})
 

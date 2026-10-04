@@ -57,7 +57,8 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="muted">{{ t("site.person.payback_hint") }}</p>
+  {% if has_payback %}<p class="muted">{{ t("site.person.payback_hint") }}</p>{% endif %}
+  {% if has_adjustment %}<p class="muted">{{ t("site.person.adjustment_hint") }}</p>{% endif %}
   {% else %}<p class="muted">{{ t("site.person.payments_empty") }}</p>{% endif %}
 </section>
 {% endblock %}

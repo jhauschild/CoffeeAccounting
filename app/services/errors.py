@@ -43,6 +43,12 @@ class InvalidAmount(InvalidInput):
     code = "invalid_amount"
 
 
+class PaybackExceedsCredit(InvalidAmount):
+    """A group admin tried to pay back more than the person's current credit (head admins may)."""
+
+    code = "payback_exceeds_credit"
+
+
 class InvalidPassword(InvalidInput):
     """Password policy violation. `context["reason"]` is one of too_short, too_long, equals_username,
     equals_email_local; the message never contains the password."""

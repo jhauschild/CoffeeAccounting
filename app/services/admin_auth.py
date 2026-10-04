@@ -25,6 +25,7 @@ which manages its own short transactions so the Argon2 check runs outside the wr
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
 import secrets
 import uuid
@@ -38,7 +39,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import write_session
 from app.models import ADMIN_ROLES, AdminSession, AdminUser, User
-from app.services import audit, passwords, ratelimit, signing
+from app.services import audit, keys, passwords, ratelimit, signing
 from app.services.errors import Conflict, InvalidInput, NotFound
 from app.timeutil import ensure_utc, utcnow
 
@@ -442,6 +443,20 @@ def _login_target(db: Session, identifier: str) -> tuple[AdminUser | None, str |
     return admin, _credential_hash(admin)
 
 
+def _attempt_meta(username: str, admin: AdminUser | None, step: str) -> dict:
+    """Audit metadata for a failed or limited login. The attempted text is never stored as typed (people
+    paste passwords into the username field): only a short keyed hash (HKDF key `admin-login-username`, 16 hex
+    characters, enough to correlate repeated attempts), plus the name itself when it matches an existing
+    admin account."""
+    digest = hmac.new(keys.derive_key("admin-login-username"),
+                      normalize_username(username or "")[:MAX_USERNAME_LENGTH].encode("utf-8"),
+                      hashlib.sha256).hexdigest()[:16]
+    meta = {"step": step, "username_hash": digest}
+    if admin is not None:
+        meta["username"] = (username or "")[:MAX_USERNAME_LENGTH]
+    return meta
+
+
 def _limit_key(username: str, ip: str) -> str:
     return f"{normalize_username(username)[:MAX_USERNAME_LENGTH]}|{ip}"
 
@@ -460,8 +475,7 @@ def _fail(db: Session, *, username: str, ip: str, step: str, admin: AdminUser | 
             ratelimit.record_hit(db, bucket, key, now)
     audit.log(db, actor_type="admin" if admin else "system", actor_id=admin.id if admin else None,
               action=action, target_type="admin", target_id=admin.id if admin else None,
-              metadata={"step": step, "username_attempted": (username or "")[:MAX_USERNAME_LENGTH]},
-              ip=ip, now=now)
+              metadata=_attempt_meta(username, admin, step), ip=ip, now=now)
     return LoginOutcome("invalid")
 
 
@@ -484,8 +498,7 @@ def _limited(db: Session, *, username: str, ip: str, step: str, admin: AdminUser
         ratelimit.record_hit(db, "admin_login_audit", marker, now)
         audit.log(db, actor_type="system", action="admin.login.rate_limited", target_type="admin",
                   target_id=admin.id if admin else None,
-                  metadata={"step": step, "username_attempted": (username or "")[:MAX_USERNAME_LENGTH]},
-                  ip=ip, now=now)
+                  metadata=_attempt_meta(username, admin, step), ip=ip, now=now)
     return True
 
 

@@ -225,9 +225,7 @@ def test_cookies_hardened_in_production(monkeypatch, db):
     chair = factories.make_chair(db, short_name="PRD")
     factories.set_price(db, 50)
     account = make_account(db, "Prod", chair, username="produser")
-    admin_id, _ = make_real_admin(totp=False)
-    monkeypatch.setenv("BALANCE_TOTP_REQUIRED", "false")
-    reload_settings()
+    admin_id, _ = make_real_admin(totp=True)  # production requires TOTP (BALANCE_TOTP_REQUIRED cannot be false)
     seen: list[str] = []
     with TestClient(create_app(), base_url="https://coffee.example.org") as c:
         def grab(r):

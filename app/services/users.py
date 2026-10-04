@@ -222,11 +222,17 @@ def update_profile(
 
 
 def set_user_status(db: Session, *, admin: AdminUser, user_id: uuid.UUID, active: bool, ip: str | None = None) -> User:
-    """Deactivate/reactivate (scope-checked). Sessions of inactive users stop resolving immediately."""
+    """Deactivate/reactivate (scope-checked). Sessions of inactive users stop resolving immediately.
+
+    Deactivating a user linked to an ACTIVE group admin row (role "chair") needs a head admin
+    (`Forbidden` otherwise), mirroring `update_profile`: an inactive linked user kills the admin's
+    login, so a peer could otherwise lock a group admin out."""
     ensure_admin_can_access_user(db, admin, user_id)
     user = get_user(db, user_id)
     if user.status == "merged":
         raise Conflict("profile has been merged")
+    if not active and admin.role != "global" and _is_active_group_admin(db, user.id):
+        raise Forbidden("only a head admin may deactivate a group admin's profile")
     new_status = "active" if active else "inactive"
     if user.status != new_status:
         user.status = new_status

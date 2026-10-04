@@ -175,7 +175,7 @@ Set in `.env` (see `.env.example`, which documents each one). The defaults are t
 | `RESET_TTL_MINUTES` | `60` | validity of a password reset link |
 | `PASSWORD_MIN_LENGTH` | `10` | minimum user password length (maximum is 128); administrators created on the command line need 12 |
 | `STEPUP_WINDOW_SECONDS` | `300` | validity of an admin step-up confirmation |
-| `BALANCE_TOTP_REQUIRED` | `false` (dev), `true` (production) | require TOTP: admins must enrol once, and balance changes need a step-up |
+| `BALANCE_TOTP_REQUIRED` | `false` (dev), `true` (production) | require TOTP: admins must enrol once, and balance changes need a step-up; `false` is refused when `ENVIRONMENT=production` |
 | `ARGON2_TIME_COST`, `ARGON2_MEMORY_COST_KIB`, `ARGON2_PARALLELISM` | `3`, `65536`, `4` | Argon2id cost; keep the defaults in production (tests lower them) |
 | `LOG_LEVEL` | `INFO` | stdout logging level |
 | `BACKUP_HOST_DIR` | `./backups` | Compose only: host directory mounted at `/backups` |

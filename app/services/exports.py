@@ -115,7 +115,8 @@ def ledger_csv(
     pays = db.execute(scoped(pe, select(pe, User.display_name, Chair.short_name)
                              .join(User, User.id == pe.user_id).join(Chair, Chair.id == pe.chair_id))).all()
     admin_ids = {e.admin_id for e, _, _ in cons if e.admin_id} | {p.admin_id for p, _, _ in pays}
-    names = {a.id: a.username for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(admin_ids)))} if admin_ids else {}
+    names = ({a.id: authz.admin_label(a) for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(admin_ids)))}
+             if admin_ids else {})
 
     entries = []
     for e, name, chair in cons:

@@ -334,7 +334,7 @@ ALLOWED_FIELDS = {
                   "inactive"},
     "PeoplePage": {"rows", "total", "page", "pages", "per_page", "sort", "query", "chair_id"},
     "HistoryConsumption": {"date", "shots", "unit_price_cents", "amount_cents", "is_reversal", "is_reversed"},
-    "HistoryPayment": {"date", "amount_cents"},
+    "HistoryPayment": {"date", "amount_cents", "is_bookkeeping"},
     "PersonHistory": {"id", "display_name", "chair_id", "chair_name", "inactive", "shots_month", "shots_total",
                       "consumed_cents", "paid_cents", "balance_cents", "consumption", "payments"},
     "ChairOverview": {"chair_id", "name", "full_name", "members", "group_admins", "owed_cents", "credit_cents",

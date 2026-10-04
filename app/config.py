@@ -251,6 +251,8 @@ class Settings(BaseSettings):
                               "'Coffee Ledger <coffee@example.org>' in production")
             if self.password_min_length < 8:
                 errors.append("PASSWORD_MIN_LENGTH must be at least 8 in production")
+            if not self.balance_totp_required:
+                errors.append("BALANCE_TOTP_REQUIRED must not be false in production (leave it unset)")
         return errors
 
 

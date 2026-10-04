@@ -6,13 +6,31 @@
 <p class="muted">{{ t("admin.groups.intro") }}</p>
 <p><a class="button button-secondary" href="/admin/exports/group-balances.csv">{{ t("admin.groups.csv") }}</a></p>
 
+{% if flagged %}
+<section class="card" id="overcredit">
+  <h2>{{ t("admin.groups.overcredit_title") }}</h2>
+  <p class="notice notice-warn">{{ t("admin.groups.overcredit_intro") }}</p>
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.csv.name") }}</th><th class="num">{{ t("admin.groups.overcredit_amount") }}</th><th class="num">{{ t("admin.groups.overcredit_credit") }}</th><th>{{ t("admin.detail.collected_by") }}</th></tr></thead>
+    <tbody>
+    {% for f in flagged %}<tr>
+      <td data-label="{{ t('admin.csv.date') }}">{{ f.created_at|local }}</td>
+      <td data-label="{{ t('admin.csv.name') }}"><a href="/admin/users/{{ f.user_id }}">{{ f.user_name }}</a></td>
+      <td class="num" data-label="{{ t('admin.groups.overcredit_amount') }}">{{ f.amount_cents|money }}</td>
+      <td class="num" data-label="{{ t('admin.groups.overcredit_credit') }}">{{ f.credit_cents|money }}</td>
+      <td data-label="{{ t('admin.detail.collected_by') }}">{{ f.collector_name }}</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+</section>
+{% endif %}
+
 <section class="card">
   <h2>{{ t("admin.groups.admins") }}</h2>
   <p>{{ t("admin.groups.total_held") }}: <strong>{{ held(total_held_cents) }}</strong></p>
   <div class="table-wrap"><table class="table-cards">
     <thead><tr><th>{{ t("admin.groups.group_admin") }}</th><th>{{ t("admin.csv.chair") }}</th><th class="num">{{ t("admin.groups.collected") }}</th><th class="num">{{ t("admin.groups.handed_over") }}</th><th class="num">{{ t("admin.groups.held") }}</th></tr></thead>
     <tbody>
-    {% for b in balances %}<tr>
+    {% for b in balances %}<tr{% if not b.is_current %} class="muted"{% endif %}>
       <td data-label="{{ t('admin.groups.group_admin') }}">{{ b.display_name or b.username }}{% if not b.is_current %} <span class="badge">{{ t("admin.groups.former") }}</span>{% endif %}</td>
       <td data-label="{{ t('admin.csv.chair') }}">{{ b.chair_short_name or "" }}</td>
       <td class="num" data-label="{{ t('admin.groups.collected') }}">{{ b.collected_cents|money }}</td>

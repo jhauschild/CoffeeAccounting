@@ -107,7 +107,8 @@ def test_every_admin_action_is_audited_without_secrets(app, db, chair, other_cha
     web = [e for e in entries if e.action in ("payment.recorded", "export.users_csv", "price.added", "user.merged")]
     assert all(e.actor_type == "admin" and e.actor_id and e.source_ip for e in web)
     login_failed = next(e for e in entries if e.action == "admin.login.failed")
-    assert login_failed.meta["username_attempted"] == "newbie" and login_failed.meta["step"] == "password"
+    assert login_failed.meta["username"] == "newbie" and login_failed.meta["step"] == "password"
+    assert len(login_failed.meta["username_hash"]) == 16 and "username_attempted" not in login_failed.meta
 
     dump = json.dumps([[e.action, e.actor_id, e.target_id, e.meta, e.source_ip] for e in entries])
     for secret_value in (PASSWORD, NEW_PASSWORD, "wrong password!", secret, "access-code", *(c.split("<")[0] for c in codes)):

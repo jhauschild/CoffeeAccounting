@@ -9,7 +9,20 @@ Derived from the ledger, never stored (V2-CONTRACT "Derived values"):
 - Chair roll-up: collected grouped by `payment_events.chair_id`, remittances by
   `group_remittances.chair_id` (the chair at event time), only for collectors with role
   `chair` (group admin). A demoted group admin keeps role `chair` and becomes inactive, so
-  someone who still holds money stays listed (`is_current=False`).
+  someone who has any collection or remittance event stays listed (`is_current=False`), even
+  with nothing held, so old remittances can still be found and corrected.
+
+Authoritative figure (decision L-3): `held(admin)` per group admin (collected minus remitted of
+that admin) is THE number a head admin relies on. A remittance records `chair_id` = the chair of
+the group admin's linked user at event time (a correction keeps the chair of its original). The
+per-chair roll-up is therefore informational: if a group admin's profile is moved to another
+chair and the role is later restored, new remittances carry the new chair while earlier
+collections carry the old one, and the per-chair rows may show remitted cash against a chair
+that did not collect it. `held` per admin and `check-ledger` stay correct regardless.
+
+Paid-back flag (M-1): `over_credit_paybacks` lists negative cash payments (not corrections) that
+exceeded the person's credit at the time they were booked. Group admins can no longer book
+those (`ledger.add_payment`); a head admin may, and every such entry is flagged.
 
 Services never commit; the caller owns the transaction.
 """
@@ -24,11 +37,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import AdminUser, Chair, GroupRemittance, PaymentEvent
+from app.models import AdminUser, Chair, ConsumptionEvent, GroupRemittance, PaymentEvent, User
 from app.services import audit
-from app.services.authz import require_global
+from app.services.authz import admin_label, require_global
 from app.services.errors import Conflict, InvalidAmount, InvalidInput, NotFound
 from app.services.prices import clean_note
+from app.services.users import effective_user_id, member_ids_select
 from app.timeutil import ensure_utc, utcnow
 
 MAX_AMOUNT_CENTS = 1_000_000_00
@@ -47,7 +61,7 @@ class GroupBalanceRow:
     collected_cents: int
     remitted_cents: int
     held_cents: int
-    is_current: bool  # False: demoted (role chair, inactive) but still holding money
+    is_current: bool  # False: demoted (role chair, inactive): a former group admin with group money history
     negative: bool  # held < 0: more handed over than collected
 
 
@@ -60,6 +74,47 @@ class ChairRollupRow:
     remitted_cents: int
     held_cents: int
     negative: bool
+
+
+@dataclass(frozen=True)
+class OverCreditPayback:
+    """A negative cash payment larger than the person's credit when it was booked."""
+
+    payment_id: uuid.UUID
+    user_id: uuid.UUID
+    user_name: str  # display name of the person paid back (admin-only views)
+    amount_cents: int  # magnitude paid back
+    credit_cents: int  # credit just before it (never negative)
+    collector_admin_id: uuid.UUID | None
+    collector_name: str
+    created_at: datetime
+
+
+def over_credit_paybacks(db: Session) -> list[OverCreditPayback]:
+    """Every negative cash payment (corrections excluded) that exceeded the effective user's credit at the
+    time it was booked, oldest first. Credit then = payments booked before it (same or earlier time, the
+    payment itself excluded) minus consumption up to that time, over the effective user's profiles as merged
+    today. Both group admins (blocked by `ledger.add_payment` today, so only legacy or direct rows) and
+    head admins (allowed) can appear."""
+    pays = list(db.scalars(
+        select(PaymentEvent).where(PaymentEvent.kind == "cash", PaymentEvent.amount_cents < 0,
+                                   PaymentEvent.correction_of_id.is_(None))
+        .order_by(PaymentEvent.created_at, PaymentEvent.id)))
+    out = []
+    for p in pays:
+        members = member_ids_select(effective_user_id(db, p.user_id) or p.user_id)
+        paid = db.scalar(select(func.coalesce(func.sum(PaymentEvent.amount_cents), 0)).where(
+            PaymentEvent.user_id.in_(members), PaymentEvent.created_at <= p.created_at, PaymentEvent.id != p.id))
+        consumed = db.scalar(select(func.coalesce(func.sum(ConsumptionEvent.amount_cents), 0)).where(
+            ConsumptionEvent.user_id.in_(members), ConsumptionEvent.created_at <= p.created_at))
+        credit = max(0, int(paid) - int(consumed))
+        if -p.amount_cents > credit:
+            collector = db.get(AdminUser, p.collector_admin_id) if p.collector_admin_id else None
+            person = db.get(User, p.user_id)
+            out.append(OverCreditPayback(p.id, p.user_id, person.display_name if person else "?",
+                                         -p.amount_cents, credit, p.collector_admin_id,
+                                         admin_label(collector) if collector is not None else "?", p.created_at))
+    return out
 
 
 def _cash_collected_query():
@@ -118,8 +173,9 @@ def chair_rollup(db: Session) -> list[ChairRollupRow]:
 
 
 def list_group_balances(db: Session) -> list[GroupBalanceRow]:
-    """All current group admins plus former ones (inactive, role chair) with non-zero held.
-    Sorted by chair short name, then username."""
+    """All current group admins plus former ones (inactive, role chair) that have ANY collection or
+    remittance event, even with held 0 (so old remittances stay correctable). Sorted by chair short
+    name, then username."""
     coll = {aid: int(total) for aid, total in db.execute(
         select(PaymentEvent.collector_admin_id, func.sum(PaymentEvent.amount_cents))
         .where(PaymentEvent.kind == "cash", PaymentEvent.collector_admin_id.is_not(None))
@@ -129,11 +185,12 @@ def list_group_balances(db: Session) -> list[GroupBalanceRow]:
         select(GroupRemittance.group_admin_id, func.sum(GroupRemittance.amount_cents))
         .group_by(GroupRemittance.group_admin_id)
     ).all()}
+    has_events = set(coll) | set(rem)
     rows: list[GroupBalanceRow] = []
     for admin in db.scalars(select(AdminUser).where(AdminUser.role == "chair")):
         c, r = coll.get(admin.id, 0), rem.get(admin.id, 0)
         h = c - r
-        if not admin.active and h == 0:
+        if not admin.active and admin.id not in has_events:
             continue
         linked = admin.user
         chair = linked.chair if linked is not None else None

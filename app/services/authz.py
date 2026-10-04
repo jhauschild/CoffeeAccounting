@@ -22,6 +22,12 @@ def require_active(admin: AdminUser | None) -> AdminUser:
     return admin
 
 
+def admin_label(admin: AdminUser) -> str:
+    """Name shown on admin-only pages and exports: the linked member's display name for a group admin
+    (or any admin with a linked account), the username for a CLI admin."""
+    return admin.user.display_name if admin.user is not None else admin.username
+
+
 def is_global(admin: AdminUser | None) -> bool:
     return admin is not None and admin.active and admin.role == "global"
 

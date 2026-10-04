@@ -21,6 +21,9 @@ Authoritative for v2 work. Read this plus your task brief; open `PLAN-v2` sectio
 - `collected(admin)` = SUM(payment amount_cents WHERE kind=cash AND collector_admin_id=admin). A group admin's negative cash payment (money paid back) reduces it.
 - `held(admin)` = collected(admin) - SUM(remittances of admin).
 - Chair rollup: collected by `payment_events.chair_id`, remittances by `group_remittances.chair_id`, only for collectors with role `chair`.
+- Decision L-3: `groups.held(admin)` (collected minus remitted of that one admin) is the authoritative per-admin figure. A remittance records `chair_id` = the chair of the group admin's linked user at event time (a correction keeps its original's chair), so the per-chair roll-up is informational: if a group admin's profile moves to another chair and the role is later restored, remitted cash can show against a chair that did not collect it. `held` and `check-ledger` are unaffected.
+- Paid back (negative cash): a group admin may book it (not as a correction) only up to the person's current credit (balance below zero, effective-user aware); a head admin may exceed it. `groups.over_credit_paybacks` flags every negative cash payment that exceeded the credit at the time (shown on /admin/groups and as a `check-ledger` note).
+- `groups.list_group_balances` and the group balances CSV list every group admin, and every former one (inactive, role `chair`) that has any collection or remittance event, even with held 0.
 - `balance = consumed - paid` unchanged; `paid` counts both kinds. UI wording: "You owe X" / "Credit X", no minus sign.
 
 ## New and changed service interfaces

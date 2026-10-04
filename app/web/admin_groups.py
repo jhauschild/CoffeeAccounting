@@ -32,6 +32,7 @@ def groups_page(request: Request, ctx: ad.AdminContext = Depends(ad.require_glob
         entries = group_report.remittance_rows(db)
         return ad.page(request, ctx, "admin/groups.html",
                        {"balances": balances, "rollup": rollup, "entries": entries, "note_max": NOTE_MAX,
+                        "flagged": groups.over_credit_paybacks(db),
                         "total_held_cents": sum(b.held_cents for b in balances)})
 
 

@@ -296,4 +296,8 @@ def check_ledger(db: Session) -> CheckReport:
         if want_c - want_r < 0:
             notes.append(f"chair {cid} has handed over {-(want_c - want_r)} cents more than collected")
 
+    for o in groups.over_credit_paybacks(db):
+        notes.append(f"paid-back cash payment {o.payment_id} by {o.collector_name} of {o.amount_cents} cents "
+                     f"exceeded the person's credit of {o.credit_cents} cents at the time")
+
     return CheckReport(problems, len(events), len(payments), len(users), len(prices), len(remittances), notes)

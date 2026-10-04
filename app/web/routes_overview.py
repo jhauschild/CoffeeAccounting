@@ -18,8 +18,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 
-from app.db import write_session
-from app.services import overview, pending
+from app.db import read_session, write_session
+from app.services import overview, pending, ratelimit
 from app.services.errors import NotFound
 from app.strings import t
 from app.timeutil import format_local, utcnow
@@ -73,12 +73,24 @@ def _page(request: Request, template: str, context: dict, nav_current: str) -> R
 
 def _anonymous(request: Request) -> Response:
     """Park the visit as a `view_site` pending action (unless this browser already holds a live pending
-    action, which is left alone so a waiting coffee is not displaced) and send the visitor to `/login`."""
+    action, which is left alone so a waiting coffee is not displaced) and send the visitor to `/login`.
+
+    Rows are capped per client address (`ratelimit.OVERVIEW_ANON`, 30 per 10 minutes, IPv6 by /64): over the
+    cap the visitor is still redirected to `/login`, but no row and no cookie are created. The common
+    cases (live pending action, over the cap) only read; the write transaction starts when a row is created."""
     response = _redirect("/login")
     pid = deps.pending_id(request)
-    with write_session() as db:
+    bucket, limit, window = ratelimit.OVERVIEW_ANON
+    key = ratelimit.ip_key(deps.client_ip(request))
+    with read_session() as db:
         if pid is not None and pending.get_pending(db, pid) is not None:
             return response
+        if ratelimit.is_limited(db, bucket, key, limit, window):
+            return response
+    with write_session() as db:
+        if ratelimit.is_limited(db, bucket, key, limit, window):  # re-check under the write lock
+            return response
+        ratelimit.record_hit(db, bucket, key)
         new_id = pending.create_view_site_pending(db)
     deps.set_pending_cookie(response, new_id)
     return response
@@ -199,13 +211,17 @@ def person_page(request: Request, person_id: str, db: Session = Depends(deps.get
         "amount_cents": abs(c.amount_cents),
         "kind": "reversal" if c.is_reversal else ("reversed" if c.is_reversed else "coffee"),
     } for c in person.consumption]
+    # A head admin's balance correction (bookkeeping) moved no money: neutral "Balance adjustment", never "Paid back".
     payments = [{"date": format_local(p.date, DATE_FORMAT), "amount_cents": abs(p.amount_cents),
-                 "kind": "payback" if p.amount_cents < 0 else "payment"} for p in person.payments]
+                 "kind": "adjustment" if p.is_bookkeeping else ("payback" if p.amount_cents < 0 else "payment")}
+                for p in person.payments]
     context = {
         "person": {"id": person.id, "name": person.display_name, "chair": person.chair_name,
                    "inactive": person.inactive, "label": person.balance_label,
                    "shots_month": _nn(person.shots_month), "shots_total": _nn(person.shots_total)},
         "consumption": consumption, "payments": payments,
+        "has_adjustment": any(p["kind"] == "adjustment" for p in payments),
+        "has_payback": any(p["kind"] == "payback" for p in payments),
         "can_edit": overview.can_edit_balance(db, ctx.user.id, person),
     }
     return _page(request, "site/person.html", context, "people")

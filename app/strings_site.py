@@ -89,7 +89,9 @@ STRINGS: dict[str, str] = {
     "site.person.kind_reversed": "Reversed",
     "site.person.kind_payment": "Payment",
     "site.person.kind_payback": "Paid back",
+    "site.person.kind_adjustment": "Balance adjustment",
     "site.person.reversal_hint": "A reversal cancels an earlier coffee: its shots and amount are taken off the balance.",
+    "site.person.adjustment_hint": "\"Balance adjustment\" is a bookkeeping correction of the balance made by a head admin: no money was handed over or returned.",
     "site.person.payback_hint": "\"Paid back\" is money that was returned to the person: it increases what they owe.",
     "site.person.inactive_note": "This account is inactive and is shown only while it still has a balance.",
     # Chairs page

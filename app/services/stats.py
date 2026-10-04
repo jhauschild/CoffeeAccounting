@@ -370,16 +370,12 @@ def _admin_names(db: Session, ids) -> dict[str, str]:
     ids = {uuid.UUID(str(i)) for i in ids if i}
     if not ids:
         return {}
-    return {str(a.id): a.username for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(ids)))}
+    return {str(a.id): authz.admin_label(a) for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(ids)))}
 
 
 def _collector_names(db: Session, ids) -> dict[str, str]:
     """Collector shown to admins: the linked member's name for a group admin, else the admin username."""
-    ids = {uuid.UUID(str(i)) for i in ids if i}
-    if not ids:
-        return {}
-    return {str(a.id): (a.user.display_name if a.user is not None else a.username)
-            for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(ids)))}
+    return _admin_names(db, ids)
 
 
 def _details(meta: dict | None) -> str:

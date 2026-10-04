@@ -87,7 +87,7 @@ def test_list_group_balances_rows_and_negative_flag(db, chair, other_chair, glob
     assert groups.held(db, b.id) == -250
 
 
-def test_former_group_admin_listed_only_while_holding(db, ga, payer, global_admin):
+def test_former_group_admin_listed_while_holding_and_after_settling(db, ga, payer, global_admin):
     pay(db, ga, payer, 1000)
     ga.active = False
     db.commit()
@@ -95,7 +95,9 @@ def test_former_group_admin_listed_only_while_holding(db, ga, payer, global_admi
     assert row.admin_id == ga.id and row.is_current is False and row.held_cents == 1000
     remit(db, global_admin, ga, 1000)  # a former admin can still be settled
     assert groups.held(db, ga.id) == 0
-    assert groups.list_group_balances(db) == []
+    # L-4: a former admin with any collection or remittance event stays listed even with held 0
+    (row,) = groups.list_group_balances(db)
+    assert row.admin_id == ga.id and row.is_current is False and row.held_cents == 0
     # a current admin with nothing to show stays listed
     ga.active = True
     db.commit()

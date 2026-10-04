@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AdminUser, Chair, GroupRemittance
+from app.services.authz import admin_label
 
 
 @dataclass(frozen=True)
@@ -44,10 +45,10 @@ def remittance_rows(db: Session, limit: int = 500) -> list[RemittanceRow]:
         a = admins.get(admin_id)
         if a is None:
             return "?"
-        return a.user.display_name if a.user is not None else a.username
+        return admin_label(a)
 
     return [RemittanceRow(
         id=e.id, created_at=e.created_at, group_admin_name=name(e.group_admin_id),
         chair_short=chairs.get(e.chair_id, "?"), amount_cents=e.amount_cents, note=e.note,
-        recorded_by=admins[e.recorded_by_admin_id].username if e.recorded_by_admin_id in admins else "?",
+        recorded_by=name(e.recorded_by_admin_id),
         is_correction=e.correction_of_id is not None, corrected=e.id in corrected) for e in entries]
