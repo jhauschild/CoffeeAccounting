@@ -41,16 +41,17 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.config import get_settings
 from app.models import EMAIL_MAX, USERNAME_MAX, AdminUser, Chair, PendingRegistration, User
 from app.services import audit, passwords, ratelimit, signing, users
-from app.services.errors import Conflict, InvalidInput, InvalidToken
+from app.services.authz import require_global
+from app.services.errors import Conflict, Forbidden, InvalidInput, InvalidToken
 from app.services.mail import MailMessage, build_message, normalize_address
-from app.services.mail_templates import already_registered, member_verification
+from app.services.mail_templates import already_registered, guest_sponsor_request, member_verification
 from app.services.onboarding import OnboardResult, start_session_and_record
 from app.timeutil import ensure_utc, utcnow
 
@@ -61,6 +62,9 @@ _USERNAME_RE = re.compile(r"^[a-z0-9._-]+$")
 
 # Per e-mail address: 5 registration requests per hour (bucket, limit, window seconds).
 REGISTRATION_EMAIL = ("register_email", 5, 60 * 60)
+# Guests: 3 requests per hour per client address, at most 5 open requests per sponsor.
+GUEST_REQUEST_IP = ("guest_request", 3, 60 * 60)
+MAX_OPEN_REQUESTS_PER_SPONSOR = 5
 MAX_RAW_TOKEN_LENGTH = 100
 TOKEN_BYTES = 32  # 256 bit
 
@@ -235,11 +239,14 @@ def mail_for_registration(result: RegistrationResult) -> MailMessage:
 
 
 # ----- peek and confirm -----------------------------------------------------------------------
-def _find_pending(db: Session, raw_token: str | None, kind: str = "member") -> PendingRegistration | None:
+def _find_pending(db: Session, raw_token: str | None, kind: str | None = "member") -> PendingRegistration | None:
+    """The pending row of that token; `kind=None` matches member and guest tokens."""
     if not isinstance(raw_token, str) or not raw_token or len(raw_token) > MAX_RAW_TOKEN_LENGTH:
         return None
-    return db.scalar(select(PendingRegistration).where(PendingRegistration.token_hash == hash_token(raw_token),
-                                                       PendingRegistration.kind == kind))
+    query = select(PendingRegistration).where(PendingRegistration.token_hash == hash_token(raw_token))
+    if kind is not None:
+        query = query.where(PendingRegistration.kind == kind)
+    return db.scalar(query)
 
 
 def _usable(row: PendingRegistration | None, now: datetime) -> bool:
@@ -247,11 +254,14 @@ def _usable(row: PendingRegistration | None, now: datetime) -> bool:
 
 
 def peek_pending(db: Session, raw_token: str | None, now: datetime | None = None) -> PendingView | None:
-    """Read-only (GET /verify): display data for a valid member token, else None. Writes nothing, not even
-    for expired or consumed tokens; the three failures are indistinguishable."""
+    """Read-only (GET /verify): display data for a valid member or guest token, else None (``kind`` tells which
+    page to show). A guest token whose sponsor is no longer an active verified member is not usable either.
+    Writes nothing, not even for expired or consumed tokens; the failures are indistinguishable."""
     now = ensure_utc(now) if now is not None else utcnow()
-    row = _find_pending(db, raw_token)
+    row = _find_pending(db, raw_token, kind=None)
     if not _usable(row, now):
+        return None
+    if row.kind == "guest" and _active_member(db, row.sponsor_id) is None:
         return None
     chair = db.get(Chair, row.chair_id)
     return PendingView(row.kind, row.username, row.display_name, row.chair_id,
@@ -301,3 +311,208 @@ def confirm_member(db: Session, raw_token: str | None, *, pending_id: str | None
     audit.log(db, actor_type="user", actor_id=user.id, action="user.verified", target_type="user",
               target_id=user.id, metadata={"coffee_status": result.coffee_status}, ip=ip, now=now)
     return result
+
+
+# ----- guests: request, approve, reject ---------------------------------------------------------
+@dataclass(frozen=True)
+class GuestRequestResult:
+    """Outcome of `begin_guest`. Callers show the SAME neutral page whatever the internals were. `token` (the raw
+    approval token, only ever mailed to `sponsor_email`) is set exactly when a request was stored; `repr` hides
+    it. No match, a full sponsor or a deactivated sponsor all give ``token=None`` and nothing to send."""
+
+    sponsor_email: str
+    token: str | None = field(default=None, repr=False)
+    pending_id: uuid.UUID | None = None
+    guest_display_name: str = ""
+    guest_username: str = ""
+
+
+def _active_member(db: Session, user_id: uuid.UUID | None) -> User | None:
+    """The user if it is an active, verified member (the only kind that may sponsor), else None."""
+    if user_id is None:
+        return None
+    user = db.get(User, user_id)
+    if (user is None or user.account_kind != "member" or user.verified_at is None or user.status != "active"
+            or user.email is None):
+        return None
+    return user
+
+
+def begin_guest(db: Session, *, username: str, display_name: str, password: str, sponsor_email: str,
+                privacy_ack: bool, ip: str, now: datetime | None = None) -> GuestRequestResult:
+    """Validate a guest registration and, if `sponsor_email` belongs to a verified active member, store a
+    `pending_registrations` row (kind guest, chair inherited from the sponsor).
+
+    Same validation as `begin_member` (username incl. CLI-admin namespace, display name, password policy,
+    privacy). The sponsor address must pass the domain check (``InvalidInput`` field ``email``, reason
+    ``domain``; the allowed domains are public). Beyond that the caller-visible outcome is identical for a
+    member's address, a non-member address, a sponsor with 5 open requests and a deactivated sponsor: a result
+    without token and no error. Only the per-IP limit (3 per hour) may raise `RateLimited`.
+    The caller mails `mail_for_guest_request(result)` (None when there is nothing to send) after its commit.
+    """
+    now = ensure_utc(now) if now is not None else utcnow()
+    bucket, limit, window = GUEST_REQUEST_IP
+    ratelimit.check_rate(db, bucket, ratelimit.ip_key(ip), limit, window, now=now)
+    normalized = validate_username(username, db)
+    name = clean_display_name(display_name)
+    address = validate_email(sponsor_email)
+    passwords.validate_policy(password, normalized)
+    if privacy_ack is not True:
+        raise InvalidInput("the privacy notice must be acknowledged", field="privacy")
+
+    password_hash = passwords.hash_password(password)  # always (timing)
+    neutral = GuestRequestResult(sponsor_email=address, guest_display_name=name, guest_username=normalized)
+    sponsor = db.scalar(select(User).where(User.email == address, User.account_kind == "member",
+                                           User.verified_at.is_not(None), User.status == "active"))
+    if sponsor is None:
+        return neutral
+    open_requests = db.scalar(
+        select(func.count()).select_from(PendingRegistration)
+        .where(PendingRegistration.sponsor_id == sponsor.id, PendingRegistration.kind == "guest",
+               PendingRegistration.consumed_at.is_(None), PendingRegistration.expires_at > now))
+    if open_requests >= MAX_OPEN_REQUESTS_PER_SPONSOR:
+        audit.log(db, actor_type="system", action="registration.guest_request_limited", target_type="user",
+                  target_id=sponsor.id, metadata={"username": normalized}, ip=ip, now=now)
+        return neutral
+
+    raw_token = secrets.token_urlsafe(TOKEN_BYTES)
+    pending = PendingRegistration(
+        kind="guest", username=normalized, username_normalized=normalized, display_name=name,
+        chair_id=sponsor.chair_id, sponsor_id=sponsor.id, password_hash=password_hash,
+        token_hash=hash_token(raw_token), created_at=now,
+        expires_at=now + timedelta(days=get_settings().guest_approval_ttl_days))
+    db.add(pending)
+    db.flush()
+    audit.log(db, actor_type="system", action="registration.requested", target_type="pending_registration",
+              target_id=pending.id,
+              metadata={"kind": "guest", "username": normalized, "sponsor_id": str(sponsor.id),
+                        "chair_id": str(sponsor.chair_id)}, ip=ip, now=now)
+    return GuestRequestResult(sponsor_email=address, token=raw_token, pending_id=pending.id,
+                              guest_display_name=name, guest_username=normalized)
+
+
+def mail_for_guest_request(result: GuestRequestResult) -> MailMessage | None:
+    """The approval request for the SPONSOR's address, or None when no request was stored.
+
+        message = mail_for_guest_request(result)
+        if message is not None:
+            background_tasks.add_task(send_in_background, message, result.sponsor_email)
+    """
+    if result.token is None:
+        return None
+    subject, body = guest_sponsor_request(guest_display_name=result.guest_display_name,
+                                          guest_username=result.guest_username, token=result.token)
+    return build_message(to=result.sponsor_email, subject=subject, body=body)
+
+
+def _consume_guest(db: Session, row: PendingRegistration, now: datetime) -> None:
+    """Consume the request atomically (``UPDATE ... WHERE consumed_at IS NULL``); `InvalidToken` if somebody
+    else got there first."""
+    consumed = db.execute(
+        update(PendingRegistration)
+        .where(PendingRegistration.id == row.id, PendingRegistration.consumed_at.is_(None),
+               PendingRegistration.expires_at > now)
+        .values(consumed_at=now).execution_options(synchronize_session=False))
+    if consumed.rowcount != 1:
+        raise InvalidToken("approval link is invalid or expired")
+
+
+def approve_guest(db: Session, raw_token: str | None, *, ip: str | None = None, now: datetime | None = None) -> User:
+    """POST /verify/{token} "Approve": create the guest account. ONE transaction, no session is issued (the
+    guest signs in afterwards). The chair is the sponsor's chair at this moment.
+
+    Raises `InvalidToken` (unknown, expired, consumed, or the sponsor is no longer an active verified member),
+    `Conflict` (reason ``username_taken``: somebody took the name meanwhile) or `InvalidInput` (the sponsor's
+    chair was deactivated). Failures raise out of the caller's transaction, so the token is not burnt.
+    """
+    now = ensure_utc(now) if now is not None else utcnow()
+    row = _find_pending(db, raw_token, kind="guest")
+    if not _usable(row, now):
+        raise InvalidToken("approval link is invalid or expired")
+    sponsor = _active_member(db, row.sponsor_id)
+    if sponsor is None:
+        raise InvalidToken("approval link is invalid or expired", reason="sponsor_inactive")
+    if username_taken(db, row.username_normalized):
+        raise Conflict("username is taken", field="username", reason=REASON_USERNAME_TAKEN)
+    _consume_guest(db, row, now)
+    try:
+        with db.begin_nested():
+            guest = users.create_account(
+                db, kind="guest", username=row.username, username_normalized=row.username_normalized,
+                display_name=row.display_name, chair_id=sponsor.chair_id, password_hash=row.password_hash,
+                sponsor_id=sponsor.id, verified_at=now, now=now)
+    except IntegrityError as exc:  # lost a race on the unique username index
+        raise Conflict("username is taken", field="username", reason=REASON_USERNAME_TAKEN) from exc
+    audit.log(db, actor_type="user", actor_id=sponsor.id, action="guest.approved", target_type="user",
+              target_id=guest.id,
+              metadata={"username": guest.username, "sponsor_id": str(sponsor.id), "chair_id": str(guest.chair_id),
+                        "pending_registration_id": str(row.id)}, ip=ip, now=now)
+    return guest
+
+
+def reject_guest(db: Session, raw_token: str | None, *, ip: str | None = None, now: datetime | None = None) -> None:
+    """POST /verify/{token} "Reject": consume the request without creating anything. `InvalidToken` when
+    unknown, expired or consumed."""
+    now = ensure_utc(now) if now is not None else utcnow()
+    row = _find_pending(db, raw_token, kind="guest")
+    if not _usable(row, now):
+        raise InvalidToken("approval link is invalid or expired")
+    _consume_guest(db, row, now)
+    audit.log(db, actor_type="user", actor_id=row.sponsor_id, action="guest.rejected",
+              target_type="pending_registration", target_id=row.id,
+              metadata={"username": row.username, "sponsor_id": str(row.sponsor_id)}, ip=ip, now=now)
+
+
+def reassign_sponsor(db: Session, *, head_admin: AdminUser, guest_id: uuid.UUID, new_sponsor_id: uuid.UUID,
+                     ip: str | None = None, now: datetime | None = None) -> User:
+    """Head admin only (`Forbidden` otherwise): give a guest a new sponsor. The new sponsor must be an active
+    verified member (`InvalidInput`, field ``sponsor``); the guest's chair becomes the new sponsor's chair
+    (one chair per person, guests inherit it). Audited with old and new sponsor and chair. The same sponsor
+    again changes and audits nothing. `NotFound` for an unknown id, `InvalidInput` (field ``guest``) if the
+    user is not a guest."""
+    require_global(head_admin)
+    guest = users.get_user(db, guest_id)
+    if guest.account_kind != "guest":
+        raise InvalidInput("user is not a guest", field="guest")
+    sponsor = _active_member(db, new_sponsor_id)
+    if sponsor is None:
+        raise InvalidInput("the new sponsor must be an active, verified member", field="sponsor")
+    if guest.sponsor_id == sponsor.id:
+        return guest
+    if not sponsor.chair.active:
+        raise InvalidInput("unknown or inactive chair", field="sponsor")
+    now = ensure_utc(now) if now is not None else utcnow()
+    old_sponsor_id, old_chair_id = guest.sponsor_id, guest.chair_id
+    guest.sponsor_id = sponsor.id
+    guest.chair_id = sponsor.chair_id
+    db.flush()
+    db.expire(guest, ["chair"])
+    audit.log(db, actor_type="admin", actor_id=head_admin.id, action="guest.sponsor_reassigned",
+              target_type="user", target_id=guest.id,
+              metadata={"from_sponsor_id": str(old_sponsor_id), "to_sponsor_id": str(sponsor.id),
+                        "from_chair_id": str(old_chair_id), "to_chair_id": str(sponsor.chair_id)}, ip=ip, now=now)
+    return guest
+
+
+# ----- guards -----------------------------------------------------------------------------------
+def ensure_member(user: User | None) -> User:
+    """Service-level guard for member-only roles (task 4.3 calls it before linking an admin account): raises
+    `Forbidden` (``reason="not_member"``) for a guest, a legacy profile without account kind, or no user."""
+    if user is None or user.account_kind != "member":
+        raise Forbidden("only members may do this", reason="not_member")
+    return user
+
+
+def recovery_address(user: User, db: Session | None = None) -> str | None:
+    """Where password-recovery mail for `user` goes: a member's own address, a guest's sponsor's address.
+    None when there is none (legacy profile; a guest whose sponsor is no longer an active verified member:
+    the head admin must reassign first). Never looks anything up by e-mail address."""
+    if user.account_kind == "member":
+        return user.email
+    if user.account_kind == "guest":
+        db = db or object_session(user)
+        if db is None:
+            raise ValueError("a database session is needed to resolve a guest's sponsor")
+        sponsor = _active_member(db, user.sponsor_id)
+        return sponsor.email if sponsor is not None else None
+    return None
