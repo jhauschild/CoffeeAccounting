@@ -1,0 +1,87 @@
+"""Mail texts (PLAN-v2 section 1). Each function returns `(subject, body)`; all wording lives in
+`strings_mail` (keys `mail.*`). Plain text only.
+
+Subjects are static (no user-controlled text). User-controlled names appear only inside bodies, reduced to a
+single clean line. Links are built from `PUBLIC_BASE_URL`; the token is percent-encoded.
+"""
+
+from __future__ import annotations
+
+from urllib.parse import quote
+
+from app.config import get_settings
+from app.services.mail import clean_header_text
+from app.strings import t
+
+MAX_NAME_IN_BODY = 100
+
+
+def _base() -> str:
+    return get_settings().public_base_url.rstrip("/")
+
+
+def _link(path: str, token: str) -> str:
+    return f"{_base()}/{path}/{quote(token, safe='')}"
+
+
+def _name(text: str) -> str:
+    return clean_header_text(text, MAX_NAME_IN_BODY)
+
+
+def duration_text(*, minutes: int | None = None, hours: int | None = None, days: int | None = None) -> str:
+    """"1 hour", "24 hours", "7 days", "90 minutes": whole units where they divide evenly."""
+    if days is not None:
+        return t("mail.duration.day") if days == 1 else t("mail.duration.days", n=days)
+    if hours is not None:
+        minutes = hours * 60
+    minutes = int(minutes or 0)
+    if minutes and minutes % 60 == 0:
+        h = minutes // 60
+        return t("mail.duration.hour") if h == 1 else t("mail.duration.hours", n=h)
+    return t("mail.duration.minute") if minutes == 1 else t("mail.duration.minutes", n=minutes)
+
+
+def _signature() -> str:
+    return t("mail.signature")
+
+
+def member_verification(token: str) -> tuple[str, str]:
+    s = get_settings()
+    body = t("mail.verify.body", link=_link("verify", token), validity=duration_text(hours=s.verification_ttl_hours),
+             ignore=t("mail.ignore_if_unexpected"), signature=_signature())
+    return t("mail.verify.subject"), body
+
+
+def already_registered() -> tuple[str, str]:
+    """No link and no token: the visitor is pointed to sign-in and "Forgot password"."""
+    body = t("mail.exists.body", signin_url=f"{_base()}/login", signature=_signature())
+    return t("mail.exists.subject"), body
+
+
+def guest_sponsor_request(*, guest_display_name: str, guest_username: str, token: str) -> tuple[str, str]:
+    s = get_settings()
+    body = t("mail.sponsor.body", guest_name=_name(guest_display_name), guest_username=_name(guest_username),
+             link=_link("verify", token), validity=duration_text(days=s.guest_approval_ttl_days),
+             ignore=t("mail.ignore_if_unexpected"), signature=_signature())
+    return t("mail.sponsor.subject"), body
+
+
+def password_reset(*, username: str, token: str, for_guest: bool = False) -> tuple[str, str]:
+    """Names the account. `for_guest`: the mail goes to the sponsor, so it says so."""
+    s = get_settings()
+    body = t("mail.reset.body", username=_name(username), link=_link("reset", token),
+             validity=duration_text(minutes=s.reset_ttl_minutes), signature=_signature())
+    if for_guest:
+        body += "\n" + t("mail.reset.guest_note", username=_name(username))
+    return t("mail.reset.subject"), body
+
+
+def guest_approved(*, guest_username: str) -> tuple[str, str]:
+    body = t("mail.guest_approved.body", guest_username=_name(guest_username), signin_url=f"{_base()}/login",
+             signature=_signature())
+    return t("mail.guest_approved.subject"), body
+
+
+def guest_rejected(*, guest_username: str) -> tuple[str, str]:
+    body = t("mail.guest_rejected.body", guest_username=_name(guest_username), signature=_signature())
+    return t("mail.guest_rejected.subject"), body
