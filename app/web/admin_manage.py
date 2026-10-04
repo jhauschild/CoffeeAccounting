@@ -118,7 +118,8 @@ def _qr_page(request: Request, ctx: ad.AdminContext, line: str = ""):
         db.expunge_all()
     urls = exports.qr_urls()
     codes = [{"kind": kind, "url": url, "label": ad.t(f"admin.qr.label_{kind}"),
-              "svg": exports.qr_svg(url, None, standalone=False)} for kind, url in urls.items()]
+              "svg": exports.qr_svg(url, None, standalone=False),
+              "show_price": kind in exports.QR_PRICE_KINDS} for kind, url in urls.items()]
     return ad.page(request, ctx, "admin/qr.html", {"codes": codes, "price": price, "line": line})
 
 

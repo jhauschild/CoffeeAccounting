@@ -26,7 +26,7 @@ from app.models import (
     User,
     effective_users,
 )
-from app.services import authz, ledger, sessions
+from app.services import authz, groups, ledger, mail_status, sessions
 from app.services.ledger import Totals
 from app.services.prices import get_price_in_effect, list_prices
 from app.services.users import _escape_like, _fold, _fold_sql, effective_user_id, member_ids_select, normalize_name
@@ -209,6 +209,20 @@ def dashboard(db: Session, admin: AdminUser, now: datetime | None = None) -> Das
         recent_consumption=_recent_consumption(db, visible, RECENT_LIMIT),
         recent_payments=_recent_payments(db, visible, RECENT_LIMIT),
     )
+
+
+@dataclass(frozen=True)
+class HeadTiles:
+    """Dashboard additions only the head admin sees: money held by group admins and the mail status."""
+
+    held_by_groups_cents: int
+    mail: mail_status.MailCard
+
+
+def head_tiles(db: Session, admin: AdminUser) -> HeadTiles:
+    authz.require_global(admin)
+    held = sum(row.held_cents for row in groups.list_group_balances(db))
+    return HeadTiles(held_by_groups_cents=held, mail=mail_status.card(db))
 
 
 # ----- user table -----------------------------------------------------------------------------

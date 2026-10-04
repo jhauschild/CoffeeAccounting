@@ -1,4 +1,5 @@
-"""Admin CLI commands (owned by the admin agent): `python -m app.cli <command>`.
+"""Admin CLI commands (owned by the admin agent): `python -m app.cli <command>`. Setup and mail commands
+(`setup`, `setup-mail`, `mail-status`, `test-mail`, `clear-mail`) live in `app/cli_setup.py`.
 
 Contract: `register(subparsers)` adds sub-commands to the `python -m app.cli` parser.
 Each sub-parser sets `func(args) -> int` (the process exit code). Passwords are never taken
@@ -105,13 +106,13 @@ def cmd_qr(args) -> int:
 
 
 def register(subparsers) -> None:
-    p = subparsers.add_parser("create-admin", help="create an administrator (prompts for the password)")
+    p = subparsers.add_parser("create-admin", allow_abbrev=False, help="create an administrator (prompts for the password)")
     p.add_argument("--username", required=True)
     p.add_argument("--role", required=True, choices=["global", "chair"])
     p.add_argument("--password-stdin", action="store_true", help="read the password from stdin instead of prompting")
     p.set_defaults(func=cmd_create_admin)
 
-    p = subparsers.add_parser("reset-admin-password", help="set a new password and revoke the admin's sessions")
+    p = subparsers.add_parser("reset-admin-password", allow_abbrev=False, help="set a new password and revoke the admin's sessions")
     p.add_argument("--username", required=True)
     p.add_argument("--password-stdin", action="store_true")
     p.set_defaults(func=cmd_reset_admin_password)
@@ -131,6 +132,10 @@ def register(subparsers) -> None:
     p = subparsers.add_parser("bootstrap-admin", help="create the first admin from ADMIN_BOOTSTRAP_* (if none exists)")
     p.set_defaults(func=cmd_bootstrap_admin)
 
-    p = subparsers.add_parser("qr", help="write printable SVG QR codes for the two scan URLs")
+    p = subparsers.add_parser("qr", help="write printable SVG QR codes (register, single, double, website)")
     p.add_argument("--out", required=True, metavar="DIR")
     p.set_defaults(func=cmd_qr)
+
+    from app import cli_setup
+
+    cli_setup.register(subparsers)

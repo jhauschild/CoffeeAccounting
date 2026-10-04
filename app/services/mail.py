@@ -17,7 +17,8 @@ Everything that sends mail goes through here (PLAN-v2 section 1 "Mail through th
   opens its own short write session for the caps, closes it, and only then talks to the backend (a slow SMTP
   server must not hold the SQLite write lock). It never raises; failures are categorised and logged without
   credentials or bodies.
-* `get_status()`: last send OK / last failure category and time, in memory (not persisted), for the admin page.
+* `get_status()`: last send OK / last failure category and time, in memory (this process only). Cross-process
+  status (CLI, admin page) is persisted by `send_in_background` through `mail_status` (audit rows, no PII).
 
 Services never commit: `send_mail` / `reserve_send` only add rate-limit rows to the caller's session.
 """
@@ -528,7 +529,20 @@ def send_mail(db: Session, mailer: Mailer, message: MailMessage, *, per_recipien
 def send_in_background(message: MailMessage, per_recipient_key: str | None = None, *,
                        mailer: Mailer | None = None) -> str | None:
     """For `BackgroundTasks.add_task(send_in_background, message, key)` after the request's commit. Never raises.
-    Returns None on success or the failure category. Logs the category only (no address, body or credential)."""
+    Returns None on success or the failure category. Logs the category only (no address, body or credential).
+    The result is also persisted without PII (`mail_status`: audit rows `mail.send_ok` / `mail.send_failed`,
+    coalesced) so the CLI and the admin page, other processes, can show the last send state."""
+    category = _send_and_record(message, per_recipient_key, mailer)
+    try:
+        from app.services import mail_status  # lazy: mail_status imports this module
+
+        mail_status.record(category)
+    except Exception:  # never let bookkeeping break a send
+        log.warning("mail status not persisted")
+    return category
+
+
+def _send_and_record(message: MailMessage, per_recipient_key: str | None, mailer: Mailer | None) -> str | None:
     from app.db import write_session
 
     try:

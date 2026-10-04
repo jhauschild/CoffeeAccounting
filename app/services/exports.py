@@ -167,10 +167,15 @@ def csv_filename(kind: str, now: datetime | None = None) -> str:
 
 
 # ----- QR codes -------------------------------------------------------------------------------
+# kind -> path; the four permanent codes (PLAN-v2 section 2). Order is the order on the page and in the CLI output.
+QR_PATHS = {"register": "/register", "single": "/coffee/single", "double": "/coffee/double", "website": "/overview"}
+QR_PRICE_KINDS = ("single", "double")  # only the shot codes show the price
+
+
 def qr_urls() -> dict[str, str]:
-    """The two canonical scan URLs (PROMPT §3); they are the only content of the QR codes."""
+    """The four permanent URLs; each is the only content of its QR code (never a token, code or personal data)."""
     base = get_settings().public_base_url
-    return {"single": f"{base}/coffee/single", "double": f"{base}/coffee/double"}
+    return {kind: f"{base}{path}" for kind, path in QR_PATHS.items()}
 
 
 def qr_svg(url: str, label: str | None, *, caption: str | None = None, standalone: bool = True) -> str:
@@ -219,7 +224,7 @@ def qr_svg(url: str, label: str | None, *, caption: str | None = None, standalon
 
 
 def write_qr_files(out_dir) -> list[str]:
-    """Write `single.svg` and `double.svg` into `out_dir` (CLI `qr --out DIR`); returns the file names."""
+    """Write `coffee-<kind>.svg` for the four codes into `out_dir` (CLI `qr --out DIR`); returns the file names."""
     from pathlib import Path
 
     directory = Path(out_dir)

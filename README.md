@@ -222,7 +222,30 @@ Alternative for the very first start: set `ADMIN_BOOTSTRAP_USERNAME` and `ADMIN_
 
 **TOTP enrolment happens once, at the first login** at `https://<host>/admin/login` while `BALANCE_TOTP_REQUIRED` is true: after the password every admin page redirects to the enrolment page with a QR code/secret for an authenticator app; you enter a code, and 8 single-use recovery codes are shown once (store them safely). Later logins need the password only. **Enrol immediately after creating the account**: whoever knows the password first can enrol the second factor.
 
+**Guided first setup.** `python -m app.cli setup` walks through everything in one interactive run: the head administrator (hidden password prompt, twice), a reminder that TOTP is enrolled at the first login, the mail login, the first price and an optional test mail. Every step can be skipped and every step is also a command of its own (`create-admin`, `setup-mail`, `set-price`, `test-mail`):
+
+```bash
+docker compose run --rm -it app python -m app.cli setup
+```
+
 Management commands: `reset-admin-password --username U` (CLI admins only; revokes the admin's sessions), `reset-admin-totp --username U` (the admin enrols again; use for a lost phone with no recovery codes), `disable-admin --username U [--enable]`. All are audited. Passwords are never taken from the command line; `--password-stdin` is available for scripting.
+
+## Mail login
+
+Registration and password reset send mail through one SMTP mailbox (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`). Its username and password are asked for with hidden prompts and stored encrypted in the `secrets` volume (`SECRETS_DIR`, directory mode 0700, file mode 0600). They are never in `.env`, the compose file, the database, the backups, logs, error pages, the audit log or any admin page. There is no `--password` option, so the password never reaches the shell history or the process list:
+
+```bash
+docker compose run --rm -it app python -m app.cli setup-mail     # username and password prompts, password twice
+docker compose run --rm app python -m app.cli mail-status        # configured yes/no, masked user, last send, last failure
+docker compose run --rm app python -m app.cli test-mail you@example.org   # one real message through the configured server
+docker compose run --rm app python -m app.cli clear-mail         # delete the stored login
+```
+
+- `setup-mail --password-stdin` is for scripted installs only: the first stdin line is the username (skipped when `--username` is given), the next the password.
+- The command refuses to run, with a clear message, when `SECRETS_DIR` is not writable (mount the volume writable for the app user).
+- `mail-status` and the head admin's dashboard card show only `mail configured: yes/no`, the masked user (`c***@lrz.de`), the last send that worked and the last failure category with its time (`connect`, `tls`, `auth`, `recipient_rejected`, `timeout`, `cap_exceeded`, `other`); `test-mail` prints the category on failure, never credentials. The status is kept as audit-log rows (`mail.send_ok`, at most one per 10 minutes, and `mail.send_failed` with the category only), so the command line and the server, two processes, see the same result.
+- The dashboard shows a banner for the head admin only: "mail not configured", "mail failing: <category>", or "cap reached" when the hourly limit (`MAIL_MAX_PER_HOUR`) blocked sending (nothing is broken then; the cap can also be reached by anonymous registration and reset requests, and mails go out again after the hour).
+- Changing `SECRET_KEY` makes the stored login unreadable (`mail login unreadable: re-run setup-mail`); run `setup-mail` again. Restoring a backup likewise needs `setup-mail`, because the secrets volume is not part of the backup.
 
 ## First price
 
@@ -241,7 +264,7 @@ Chairs (research groups; the label is `CHAIR_LABEL`) are created by a global adm
 
 ## QR codes
 
-The admin area has a QR page (`/admin/qr`) that shows both URLs and the current price and produces printable SVG codes (one per half page, large "SINGLE" / "DOUBLE" labels, optional free-text line such as a short instruction, which is **not stored**). The codes contain only `{PUBLIC_BASE_URL}/coffee/single` and `/coffee/double`. From the command line:
+The admin area has a QR page (`/admin/qr`, every administrator) with four permanent codes, each a labeled printable SVG (two per printed page, large labels, optional free-text line such as a short instruction, which is **not stored**): **REGISTER** `{PUBLIC_BASE_URL}/register`, **SINGLE** `/coffee/single`, **DOUBLE** `/coffee/double` and **WEBSITE** `/overview`. The codes contain only these addresses and no personal data. Scanning REGISTER only opens the registration page and never records a coffee. From the command line:
 
 ```bash
 docker compose run --rm app python -m app.cli qr --out /backups/qr    # appears in ./backups/qr on the host

@@ -6,8 +6,7 @@
   <h1>{{ t("admin.qr.title") }}</h1>
   <section class="card">
     <dl class="totals">
-      <dt>{{ t("admin.qr.label_single") }}</dt><dd class="wrap">{{ codes[0].url }}</dd>
-      <dt>{{ t("admin.qr.label_double") }}</dt><dd class="wrap">{{ codes[1].url }}</dd>
+      {% for c in codes %}<dt>{{ c.label }}</dt><dd class="wrap">{{ c.url }}</dd>{% endfor %}
       <dt>{{ t("admin.dash.price") }}</dt><dd>{% if price %}{{ price.price_per_shot_cents|money }}{% else %}–{% endif %}</dd>
     </dl>
     <p class="muted">{{ t("admin.qr.only_urls") }}</p>
@@ -23,10 +22,10 @@
   </section>
 </div>
 {% for c in codes %}
-<section class="qr-sheet card" aria-label="{{ c.label }}">
+<section class="qr-sheet card" aria-label="{{ c.label }}" data-qr="{{ c.kind }}">
   <p class="qr-label">{{ c.label }}</p>
   <div class="qr-code">{{ c.svg|safe }}</div>
-  {% if price %}<p class="qr-price">{{ price.price_per_shot_cents|money }} {{ t("admin.dash.per_shot") }}</p>{% endif %}
+  {% if price and c.show_price %}<p class="qr-price">{{ price.price_per_shot_cents|money }} {{ t("admin.dash.per_shot") }}</p>{% endif %}
   <p class="qr-url">{{ c.url }}</p>
   {% if line %}<p class="qr-line">{{ line }}</p>{% endif %}
 </section>

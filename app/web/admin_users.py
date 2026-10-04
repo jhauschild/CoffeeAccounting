@@ -52,7 +52,8 @@ def _filters(q: str, chair: str, status: str, sort: str, direction: str) -> dict
 def dashboard(request: Request, ctx: ad.AdminContext = Depends(ad.require_admin)):
     with read_session() as db:
         data = stats.dashboard(db, ctx.admin)
-        return ad.page(request, ctx, "admin/dashboard.html", {"d": data})
+        tiles = stats.head_tiles(db, ctx.admin) if ctx.is_global else None  # group admins never get these
+        return ad.page(request, ctx, "admin/dashboard.html", {"d": data, "tiles": tiles})
 
 
 # ----- user table -------------------------------------------------------------------------------

@@ -105,5 +105,7 @@ def test_bootstrap_command(monkeypatch):
 
 def test_qr_command_writes_files(tmp_path, capsys):
     assert run("qr", "--out", str(tmp_path / "qr")) == 0
-    assert (tmp_path / "qr" / "coffee-single.svg").exists()
-    assert "http://testserver/coffee/double" in capsys.readouterr().out
+    for kind in ("register", "single", "double", "website"):
+        assert (tmp_path / "qr" / f"coffee-{kind}.svg").exists()
+    out = capsys.readouterr().out
+    assert "http://testserver/overview" in out and "http://testserver/coffee/double" in out

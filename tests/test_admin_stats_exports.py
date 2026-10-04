@@ -208,7 +208,9 @@ def test_qr_urls_and_svg_have_no_active_content(monkeypatch):
     monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver/")
     reload_settings()
     urls = exports.qr_urls()
-    assert urls == {"single": "http://testserver/coffee/single", "double": "http://testserver/coffee/double"}
+    assert urls == {"register": "http://testserver/register", "single": "http://testserver/coffee/single",
+                    "double": "http://testserver/coffee/double", "website": "http://testserver/overview"}
+    assert list(urls) == ["register", "single", "double", "website"]
     svg = exports.qr_svg(urls["single"], "SINGLE & <more>")
     assert svg.startswith("<svg") and "SINGLE &amp; &lt;more&gt;" in svg
     assert "<script" not in svg and "style=" not in svg and "onload" not in svg.lower()
@@ -217,5 +219,5 @@ def test_qr_urls_and_svg_have_no_active_content(monkeypatch):
 
 def test_qr_files(tmp_path):
     names = exports.write_qr_files(tmp_path / "out")
-    assert sorted(names) == ["coffee-double.svg", "coffee-single.svg"]
+    assert sorted(names) == ["coffee-double.svg", "coffee-register.svg", "coffee-single.svg", "coffee-website.svg"]
     assert "SINGLE" in (tmp_path / "out" / "coffee-single.svg").read_text()

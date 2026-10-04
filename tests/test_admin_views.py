@@ -119,15 +119,17 @@ def test_ledger_csv_route(gc, db, chair, price):
         assert r2.scalars(select(AuditLog).where(AuditLog.action == "export.ledger_csv")).first().meta["rows"] == 1
 
 
-def test_qr_page_content_has_only_the_two_urls_and_no_secrets(gc, monkeypatch, price):
+def test_qr_page_content_has_only_the_four_urls_and_no_secrets(gc, monkeypatch, price):
     from tests.conftest import reload_settings
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://coffee.test")
     reload_settings()
     page = gc[0].get("/admin/qr").text
-    assert "https://coffee.test/coffee/single" in page and "https://coffee.test/coffee/double" in page
-    assert page.count("<svg") == 2 and "SINGLE" in page and "DOUBLE" in page and "€0.50" in page
+    allowed = {f"https://coffee.test{p}" for p in ("/register", "/coffee/single", "/coffee/double", "/overview")}
+    assert all(url in page for url in allowed)
+    assert page.count("<svg") == 4 and all(w in page for w in ("REGISTER", "SINGLE", "DOUBLE", "WEBSITE"))
+    assert "€0.50" in page
     urls = set(re.findall(r"https?://[^\s\"'<>]+", page))
-    assert urls <= {"https://coffee.test/coffee/single", "https://coffee.test/coffee/double"}
+    assert urls <= allowed
     for secret in ("test-secret-key-0123456789abcdef0123456789", "test-access-code"):
         assert secret not in page
     assert "coffee_session" not in page and "token" not in page.lower().replace("csrf_token", "")
@@ -135,8 +137,8 @@ def test_qr_page_content_has_only_the_two_urls_and_no_secrets(gc, monkeypatch, p
 
 def test_qr_free_text_line_is_printed_but_never_stored(gc, db):
     csrf = gc[1]
-    r = gc[0].post("/admin/qr", data={"csrf_token": csrf, "line": "Access code: <b>kaffee-2026</b>"})
-    assert r.status_code == 200 and "Access code: &lt;b&gt;kaffee-2026&lt;/b&gt;" in r.text  # escaped
+    r = gc[0].post("/admin/qr", data={"csrf_token": csrf, "line": "Notice: <b>kaffee-2026</b>"})
+    assert r.status_code == 200 and "Notice: &lt;b&gt;kaffee-2026&lt;/b&gt;" in r.text  # escaped
     assert r.text.count("qr-line") >= 2
     with read_session() as r2:
         dump = " ".join(str(a.meta) for a in r2.scalars(select(AuditLog)))
