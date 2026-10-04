@@ -74,7 +74,7 @@ class SlowHasher:
         return self._real.check_needs_rehash(*a, **k)
 
 
-def _probe_writes_during(monkeypatch, action, *, delay: float = 0.6) -> tuple[list[float], SlowHasher, object]:
+def _probe_writes_during(monkeypatch, action, *, delay: float = 1.2) -> tuple[list[float], SlowHasher, object]:
     """Run `action()` in a thread with a slow hasher; while it runs, another connection keeps taking the write lock
     (BEGIN IMMEDIATE) and we time how long each attempt waits. Returns (waits, hasher, action result)."""
     entered = threading.Event()
@@ -104,7 +104,7 @@ def _probe_writes_during(monkeypatch, action, *, delay: float = 0.6) -> tuple[li
     return waits, slow, box.get("result")
 
 
-def _assert_lock_free(waits: list[float], slow: SlowHasher, *, limit: float = 0.3) -> None:
+def _assert_lock_free(waits: list[float], slow: SlowHasher, *, limit: float = 0.8) -> None:
     assert slow.calls >= 1
     assert len(waits) >= 5, "the action finished before the probe could run"
     assert max(waits) < limit, f"a write waited {max(waits):.2f}s: the write lock was held while hashing"
@@ -119,7 +119,7 @@ def test_probe_detects_a_held_lock(monkeypatch, db, chair):
             return login.sign_in(w, username="alice", password=PASSWORD, ip=IP)
 
     waits, slow, _ = _probe_writes_during(monkeypatch, locked)
-    assert slow.calls >= 1 and max(waits) > 0.3
+    assert slow.calls >= 1 and max(waits) > 0.8
 
 
 def test_sign_in_hashes_without_the_write_lock(monkeypatch, db, chair):

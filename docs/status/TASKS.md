@@ -37,6 +37,6 @@ Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
 | 6.2 | Real docker compose up check | L | 6.1 | blocked | no Docker daemon in the sandbox; user must run docker compose up (see FINAL.md) |
 | 7.1 | Playwright e2e rewrite | L | 3, 5 | done | 10 Playwright e2e tests, 3 stable runs |
 | 7.2 | Ledger audit and security review (fresh reviewer) | H | all | done | 0 critical/high, 1 medium, 3 low; DoD 9/10 verified; see review-final.md |
-| 7.3 | Acceptance run, ACCEPTANCE.md update | L | 7.2 | doing | |
+| 7.3 | Acceptance run, ACCEPTANCE.md update | L | 7.2 | done | acceptance run: DoD 1-8,10 verified, 9 against local TLS relay only; see ACCEPTANCE.md and FINAL.md |
 
 Gates: M4 after 2.5, M5 after 4.5, M6 after 7.3. At each gate: full suite, alembic check, commit, then bundle (see docs/status/PERSIST.md).
