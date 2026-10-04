@@ -11,7 +11,7 @@ from starlette.responses import Response
 from app.db import read_session, write_session
 from app.models import NOTE_MAX
 from app.money import format_amount
-from app.services import authz, exports, ledger, sessions, stats, users
+from app.services import authz, exports, ledger, roles, sessions, stats, users
 from app.services import audit
 from app.services.errors import InvalidInput, NotFound, ServiceError
 from app.web import admin_deps as ad
@@ -138,7 +138,8 @@ def user_detail(request: Request, uid: uuid.UUID = Depends(ad.admin_user_access)
         return ad.page(request, ctx, "admin/user_detail.html",
                        {"detail": detail, "chairs": chairs, "unit_cents": unit, "note_max": NOTE_MAX,
                         "unit_price_plain": format_amount(unit) if unit is not None else "",
-                        "uncorrected": uncorrected})
+                        "uncorrected": uncorrected,
+                        "role": roles.role_info(db, detail.user) if ctx.is_global else None})
 
 
 def _act(request: Request, uid: uuid.UUID, ctx: ad.AdminContext, action, *, ok: str, path: str | None = None):

@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from app.web import admin_deps as ad
-from app.web import admin_groups, admin_login, admin_manage, admin_stepup, admin_users
+from app.web import admin_groups, admin_login, admin_manage, admin_roles, admin_stepup, admin_users
 from tests import factories
 from tests.admin_support import fast_hasher, login_as, make_real_admin, new_client  # noqa: F401
 
@@ -22,7 +22,7 @@ def _calls(dependant):
 
 def collect_routes():
     found = []
-    for module in (admin_login, admin_users, admin_groups, admin_stepup, admin_manage):
+    for module in (admin_login, admin_users, admin_groups, admin_roles, admin_stepup, admin_manage):
         for route in module.router.routes:
             for method in route.methods - {"HEAD", "OPTIONS"}:
                 found.append((method, "/admin" + route.path, set(_calls(route.dependant))))
@@ -69,6 +69,9 @@ POST_DATA = {
     "/admin/users/{user_id}/balance": {"amount": "5", "direction": "owes"},
     "/admin/groups/remittances": {"group_admin_id": "{group_admin_id}", "amount": "5"},
     "/admin/groups/remittances/{remittance_id}/correct": {"corrected_to": "4"},
+    "/admin/users/{user_id}/group-admin/promote": {},
+    "/admin/users/{user_id}/group-admin/demote": {},
+    "/admin/users/{user_id}/sponsor": {"sponsor_id": "{user2_id}"},
     "/admin/stepup/confirm": {"payload": "not-a-payload", "nonce": "x"},
 }
 
@@ -96,6 +99,8 @@ NON_BALANCE_POSTS = {
     "/admin/users/{user_id}/sessions/revoke",                           # profile, chair change, deactivation
     "/admin/chairs", "/admin/chairs/{chair_id}/rename", "/admin/chairs/{chair_id}/active",
     "/admin/prices", "/admin/qr",                                       # chairs, price change, QR preview
+    "/admin/users/{user_id}/group-admin/promote", "/admin/users/{user_id}/group-admin/demote",
+    "/admin/users/{user_id}/sponsor",                                   # role assignment, sponsor change (task 4.3)
 }
 # Entry forms of the step-up actions: they only PREVIEW (a rolled-back dry run) and render the confirm page.
 PREVIEW_POSTS = {
@@ -105,7 +110,6 @@ PREVIEW_POSTS = {
     "/admin/groups/remittances/{remittance_id}/correct",
 }
 STEPUP_POSTS = {"/admin/stepup/confirm"}
-# Role assignment (task 4.3) is not built yet; it will be added to NON_BALANCE_POSTS then.
 
 
 def test_every_post_route_is_allow_listed_or_requires_stepup():

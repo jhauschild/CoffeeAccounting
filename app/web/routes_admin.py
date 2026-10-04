@@ -11,7 +11,7 @@ from sqlalchemy.exc import OperationalError
 from app.db import write_session
 from app.services import admin_auth
 from app.services.errors import ServiceError
-from app.web import admin_groups, admin_login, admin_manage, admin_stepup, admin_users
+from app.web import admin_groups, admin_login, admin_manage, admin_roles, admin_stepup, admin_users
 
 log = logging.getLogger(__name__)
 
@@ -32,5 +32,5 @@ async def _lifespan(app):
 
 
 router = APIRouter(lifespan=_lifespan)
-for _sub in (admin_login, admin_users, admin_groups, admin_stepup, admin_manage):
+for _sub in (admin_login, admin_users, admin_groups, admin_roles, admin_stepup, admin_manage):
     router.include_router(_sub.router, prefix="/admin")
