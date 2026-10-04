@@ -35,9 +35,11 @@ def cmd_check_ledger(args) -> int:
                f"{report.users} users, {report.prices} prices checked")
     if report.ok:
         print(f"OK: {summary}")
-        return 0
-    print(f"FAILED: {len(report.problems)} problem(s); {summary}", file=sys.stderr)
-    return 1
+    else:
+        print(f"FAILED: {len(report.problems)} problem(s); {summary}", file=sys.stderr)
+    for note in report.notes:
+        print(f"NOTE {note}")
+    return 0 if report.ok else 1
 
 
 def cmd_set_price(args) -> int:
