@@ -136,6 +136,27 @@ def create_user(db: Session, *, display_name: str, chair_id: uuid.UUID, now: dat
     return user
 
 
+def create_account(db: Session, *, kind: str, username: str, username_normalized: str, display_name: str,
+                   chair_id: uuid.UUID, password_hash: str, email: str | None = None,
+                   sponsor_id: uuid.UUID | None = None, verified_at: datetime | None = None,
+                   now: datetime | None = None) -> User:
+    """Create a v2 account row (member: email, no sponsor; guest: sponsor, no email). The caller has
+    validated username, email and password; the DB CHECKs and unique indexes are the last line.
+    Raises `InvalidInput` for a bad display name or an unknown/inactive chair."""
+    if kind not in ("member", "guest"):
+        raise InvalidInput("invalid account kind")
+    name = clean_display_name(display_name)
+    _active_chair(db, chair_id)
+    now = now or utcnow()
+    user = User(display_name=name, normalized_name=normalize_name(name), chair_id=chair_id, status="active",
+                created_at=now, last_activity_at=now, username=username, username_normalized=username_normalized,
+                account_kind=kind, email=email, sponsor_id=sponsor_id, verified_at=verified_at or now,
+                password_hash=password_hash)
+    db.add(user)
+    db.flush()
+    return user
+
+
 def update_profile(
     db: Session,
     *,

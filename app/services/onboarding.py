@@ -97,6 +97,18 @@ def _consume_and_record(db: Session, user: User, session: UserSession, pending_i
     return result.event, COFFEE_RECORDED
 
 
+def start_session_and_record(db: Session, user: User, *, pending_id: str | None = None,
+                             old_session_id: uuid.UUID | None = None,
+                             now: datetime | None = None) -> OnboardResult:
+    """For v2 sign-in/registration flows: issue a NEW session for `user` (revoking `old_session_id`) and
+    consume + record the pending coffee, if any, exactly like `register_and_start_session`. Same
+    transaction rules; a pending coffee that cannot be recorded never aborts the caller."""
+    now = _now(now)
+    session, raw = _start_session(db, user, old_session_id, now)
+    event, status = _consume_and_record(db, user, session, pending_id, now)
+    return OnboardResult(user, raw, session, event, status, created=True)
+
+
 def _new_user(db: Session, *, user_id: uuid.UUID | None, display_name: str, chair_id: uuid.UUID,
               now: datetime) -> User:
     return users.create_user(db, display_name=display_name, chair_id=chair_id, now=now, user_id=user_id)

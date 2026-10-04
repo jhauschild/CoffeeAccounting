@@ -56,3 +56,10 @@ class Conflict(ServiceError):
 
 class RateLimited(ServiceError):
     code = "rate_limited"
+
+
+class InvalidToken(ServiceError):
+    """A mailed one-time token (verification, approval, reset) is unknown, expired or already used.
+    One error for all three so the response never says which."""
+
+    code = "invalid_token"
