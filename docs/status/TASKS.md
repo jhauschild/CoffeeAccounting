@@ -30,10 +30,11 @@ Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
 | 4.5 | CLI setup commands, QR page with 4 codes, dashboard tiles | L | 2.2 | done | setup/mail CLI, mail status, 4 QR codes, tiles; 27 tests |
 | 5.1 | /overview and /overview/people | L | 1.5 | done | /overview and /overview/people; 37 tests |
 | 5.2 | Person page, chairs, prices, privacy sentinel test | H | 5.1 | done | person/chairs/prices pages, sentinel crawl; 36 tests |
-| R5 | M5 review of 3.1, 3.2, 4.1-4.5, 5.1, 5.2 (read-only, writes docs/status/review-M5.md) | H | 5.2 | doing | |
-| 6.1 | .env.example, compose secrets volume, backup exclusion, README, privacy, smoke | L | 2-5 | doing | |
+| R5 | M5 review of 3.1, 3.2, 4.1-4.5, 5.1, 5.2 (read-only, writes docs/status/review-M5.md) | H | 5.2 | done | 0 critical/high, 4 medium, 9 low; see review-M5.md |
+| 6.1 | .env.example, compose secrets volume, backup exclusion, README, privacy, smoke | L | 2-5 | done | compose secrets volume, env, backup, smoke, README, ARCHITECTURE; 16 tests |
+| F5 | Fix M5-review findings M-1..M-4, L-1..L-9 (see review-M5.md) | H | R5 | doing | |
 | 6.2 | Real docker compose up check | L | 6.1 | todo | |
-| 7.1 | Playwright e2e rewrite | L | 3, 5 | todo | |
+| 7.1 | Playwright e2e rewrite | L | 3, 5 | doing | |
 | 7.2 | Ledger audit and security review (fresh reviewer) | H | all | todo | |
 | 7.3 | Acceptance run, ACCEPTANCE.md update | L | 7.2 | todo | |
 
