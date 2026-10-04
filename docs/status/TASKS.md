@@ -17,12 +17,13 @@ Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
 | 2.1 | Mailer interface, memory and file backends, caps | L | 1.2 | done | mail.py backends, caps, templates; 56 tests |
 | 2.2 | Encrypted credential store, smtp backend, fake-SMTP and credential tests | H | 2.1 | done | encrypted credential store, verified-TLS SMTP, protocol tests; 58 tests |
 | 2.3 | Member registration and verification | H | 2.1 | done | member registration services; 85 tests |
-| 2.4 | Guest registration, sponsor approval, reassign | H | 2.3 | doing | |
-| 2.5 | Login, forgot/reset, limits, pending-action change, gate removal | H | 2.3 | doing | |
+| 2.4 | Guest registration, sponsor approval, reassign | H | 2.3 | done | guest registration, approval, reassign; 55 tests |
+| 2.5 | Login, forgot/reset, limits, pending-action change, gate removal | H | 2.3 | done | login, recovery, gate removed, minimal routes; e2e updated |
+| R4 | M4 review of 1.3, 1.4, 2.2-2.5 (read-only, writes docs/status/review-M4.md) | H | 2.5 | doing | |
 | 3.1 | User pages and strings for 2.3-2.5 | L | 2.5 | todo | |
 | 3.2 | Scan result page, account page | L | 1.3 | todo | |
 | 4.1 | Admin login for group admins, TOTP enrolment | H | 1.1 | done | v2 admin login, TOTP enrolment, stepup_until; suite green |
-| 4.2 | Step-up dependency and confirm pages | H | 4.1 | todo | |
+| 4.2 | Step-up dependency and confirm pages | H | 4.1 | doing | |
 | 4.3 | Role button, /admin/admins, sponsor reassign UI | L | 4.1 | todo | |
 | 4.4 | /admin/groups, remittances UI, set balance, CSV | H | 4.2, 1.4 | todo | |
 | 4.5 | CLI setup commands, QR page with 4 codes, dashboard tiles | L | 2.2 | todo | |
