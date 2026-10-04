@@ -40,11 +40,12 @@ def _undo(client, event_id: str, csrf: str | None, **kw):
 def test_done_page_content(client, db, user, price, login):
     login(user)
     page = client.get(scan(client, "double").headers["location"]).text
-    for expected in ("Double recorded", "€0.50", "€1.00", "Undo this coffee", 'href="/account"', "€1.00"):
+    for expected in ("Double recorded", "€0.50", "€1.00", "Undo this coffee", 'href="/account"', 'href="/overview"',
+                     "Outstanding: €1.00", "Shots this month", "Amount paid"):
         assert expected in page
     local = re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", page)
     assert local  # local timestamp
-    assert "Shots consumed" in page and "Amount paid" in page and "Balance" in page
+    assert "Shots consumed" in page and "Amount paid" in page
 
 
 def test_done_page_shows_credit_for_negative_balance(client, db, user, global_admin, price, login):
@@ -52,13 +53,13 @@ def test_done_page_shows_credit_for_negative_balance(client, db, user, global_ad
     db.commit()
     login(user)
     page = client.get(scan(client).headers["location"]).text
-    assert "Credit €4.50" in page and "€5.00" in page
+    assert "Credit: €4.50" in page and "€5.00" in page and "Outstanding" not in page
 
 
 def test_total_balance_positive_when_owing(client, db, user, price, login):
     login(user)
     page = client.get(scan(client).headers["location"]).text
-    assert "Credit" not in page and "Balance (to pay)" in page
+    assert "Credit" not in page and "Outstanding: €0.50" in page
 
 
 # ----- undo -----------------------------------------------------------------------------------
@@ -180,7 +181,7 @@ def test_account_page(client, db, user, global_admin, price, login):
     assert "Alice Example" in page and "CHA" in page and "€0.50" in page  # profile, chair, current price
     assert "Single" in page and "Double" in page and "Payment" in page and "€1.25" in page
     assert "Shots consumed" in page and "€1.50" in page  # 3 shots * 0.50
-    assert "Credit" not in page  # 1.50 consumed - 1.25 paid = 0.25 owed
+    assert "Credit" not in page and "Outstanding: €0.25" in page  # 1.50 consumed - 1.25 paid = 0.25 owed
     assert 'action="/logout"' in page and 'href="/account/edit"' in page
 
 
@@ -382,6 +383,8 @@ def test_all_string_keys_used_by_templates_and_routes_exist():
         used |= {f"user.scan.title_{kind}", f"user.scan.button_{kind}", f"user.done.{kind}", f"user.pending.{kind}"}
     used |= {f"user.account.type_{k}" for k in ("single", "double", "reversal", "adjustment")}
     used |= {"user.pending.view_site", "user.register.error_name"}
+    used |= {f"user.headline.{k}" for k in ("owes", "credit", "even")}
+    used |= {f"user.account.payment_{k}" for k in ("payment", "paid_back", "bookkeeping_in", "bookkeeping_out")}
     used |= {f"user.register.error_password_{r}" for r in ("too_short", "too_long", "equals_username",
                                                          "equals_email_local")}
     used |= {f"user.register.error_username_{r}" for r in ("length", "chars")}

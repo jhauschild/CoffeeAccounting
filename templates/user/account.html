@@ -1,15 +1,28 @@
 {% extends "base.html" %}
-{% from "user/_totals.html" import totals_list %}
+{% from "user/_totals.html" import headline_block, totals_list %}
+{% from "user/_fields.html" import field %}
 {% block title %}{{ t("user.account.title") }} – {{ settings.app_title }}{% endblock %}
 {% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
 {% block content %}
 {% if notice %}<p class="card notice notice-ok" role="status">{{ t(notice) }}</p>{% endif %}
 <section class="card">
   <h1>{{ t("user.account.title") }}</h1>
+  {{ headline_block(headline, month_shots) }}
+  <p class="stack-links">
+    <a class="button button-secondary button-block" href="/overview">{{ t("user.account.site") }}</a>
+  </p>
+</section>
+<section class="card">
+  <h2>{{ t("user.account.profile") }}</h2>
   <dl class="totals">
-    <dt>{{ t("user.account.profile") }}</dt><dd>{{ user.display_name }} · {{ chair.short_name }}</dd>
+    <dt>{{ t("user.account.name") }}</dt><dd>{{ user.display_name }}</dd>
+    <dt>{{ t("user.account.chair") }}</dt><dd>{{ chair.short_name }}</dd>
+    <dt>{{ t("user.account.username") }}</dt><dd>{{ user.username }}</dd>
+    {% if user.email %}<dt>{{ t("user.account.email") }}</dt><dd>{{ user.email }}</dd>{% endif %}
     <dt>{{ t("user.account.price") }}</dt><dd>{% if price_cents is not none %}{{ price_cents|money }}{% else %}{{ t("user.account.no_price") }}{% endif %}</dd>
   </dl>
+  <p class="muted">{{ t("user.account.private_hint") }}</p>
+  <p class="muted privacy-line">{{ t("user.account.visibility") }}</p>
   <p><a href="/account/edit">{{ t("user.account.edit") }}</a></p>
 </section>
 <section class="card">
@@ -40,11 +53,22 @@
   <div class="table-wrap"><table>
     <tbody>
     {% for p in payments %}
-      <tr><td>{{ p.time }}</td><td>{{ t("user.account.payment") }}</td><td class="num">{{ p.amount_cents|money }}</td></tr>
+      <tr><td>{{ p.time }}</td><td>{{ t("user.account.payment_" ~ p.type) }}{% if p.correction %} <span class="muted">{{ t("user.account.payment_correction") }}</span>{% endif %}</td><td class="num">{{ p.amount_cents|money }}</td></tr>
     {% endfor %}
     </tbody>
   </table></div>
   {% else %}<p class="muted">{{ t("user.account.payments_empty") }}</p>{% endif %}
+</section>
+<section class="card" id="password">
+  <h2>{{ t("user.password.title") }}</h2>
+  <form method="post" action="/account/password">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {{ field("current_password", t("user.password.current"), type="password", autocomplete="current-password", maxlength=1000, error=errors.current, error_args={"min": min_password_length}) }}
+    {{ field("password", t("user.password.new"), type="password", autocomplete="new-password", maxlength=1000, hint=t("user.register.password_hint", min=min_password_length), error=errors.password, error_args={"min": min_password_length}) }}
+    {{ field("password2", t("user.password.new2"), type="password", autocomplete="new-password", maxlength=1000, error=errors.password2) }}
+    <p class="muted">{{ t("user.password.effect") }}</p>
+    <button type="submit" class="button-block">{{ t("user.password.submit") }}</button>
+  </form>
 </section>
 <section class="card">
   <p class="muted">{{ t("user.account.leave_hint") }}</p>

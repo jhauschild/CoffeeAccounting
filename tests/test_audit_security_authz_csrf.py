@@ -31,6 +31,8 @@ USER_POST_DATA = {
     "/forgot": {"username": "alice"},
     "/reset/{token}": {"password": "a-long-enough-password", "password2": "a-long-enough-password"},
     "/account/edit": {"display_name": "Pwned", "chair_id": "{chair_id}"},
+    "/account/password": {"current_password": "x", "password": "a-long-enough-password",
+                          "password2": "a-long-enough-password"},
     "/logout": {},
 }
 PRE_SESSION_POSTS = ["/login", "/register", "/verify/{token}", "/forgot", "/reset/{token}"]

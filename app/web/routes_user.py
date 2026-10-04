@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import read_session, write_session
 from app.models import COFFEE_KINDS, DISPLAY_NAME_MAX, Chair, ConsumptionEvent
-from app.services import ledger, login, onboarding, pending, prices, recovery, registration, sessions, users
+from app.services import (account, ledger, login, onboarding, pending, prices, recovery, registration, sessions,
+                          users)
 from app.services.errors import (AlreadyReversed, Conflict, Forbidden, InvalidCredentials, InvalidInput, InvalidPassword,
                                  InvalidToken, NoPriceConfigured, NotFound, RateLimited, UserInactive)
 from app.services.mail import send_in_background
@@ -117,7 +118,10 @@ def done_page(request: Request, event_id: str, ctx: UserContext = Depends(deps.r
         "amount_cents": event.amount_cents, "time": user_views.local_time(event.created_at),
         "reversed": ledger.is_reversed(db, event.id), "can_undo": undoable is not None and undoable.id == event.id,
     }
-    return render(request, "user/done.html", {"event": view, "totals": ledger.get_totals(db, ctx.user.id)})
+    totals = ledger.get_totals(db, ctx.user.id)
+    return render(request, "user/done.html", {
+        "event": view, "totals": totals, "headline": user_views.headline(totals.balance_cents),
+        "month_shots": user_views.month_shots(db, ctx.user.id)})
 
 
 @router.post("/coffee/undo/{event_id}", dependencies=[Depends(deps.require_csrf)])
@@ -374,17 +378,53 @@ def _check_profile_form(display_name: str, chair_id: str, chair_ids: set):
 
 
 # ----- account --------------------------------------------------------------------------------
-@router.get("/account")
-def account_page(request: Request, notice: str = "", ctx: UserContext = Depends(deps.require_user),
-                 db: Session = Depends(deps.get_read_db)):
+def _account_page(request: Request, ctx: UserContext, *, notice: str | None = None, errors: dict | None = None,
+                  status: int = 200) -> Response:
     uid = ctx.user.id
-    price = prices.get_price_in_effect(db)
-    return render(request, "user/account.html", {
-        "user": ctx.user, "chair": db.get(Chair, ctx.user.chair_id), "totals": ledger.get_totals(db, uid),
-        "price_cents": price.price_per_shot_cents if price else None,
-        "events": user_views.event_rows(db, ledger.recent_consumption(db, uid, 20)),
-        "payments": user_views.payment_rows(ledger.recent_payments(db, uid, 20)),
-        "notice": user_views.notice_key(notice)})
+    with read_session() as db:  # render inside the block: the rows expire when the read transaction ends
+        price = prices.get_price_in_effect(db)
+        totals = ledger.get_totals(db, uid)
+        return render(request, "user/account.html", {
+            "user": ctx.user, "chair": db.get(Chair, ctx.user.chair_id), "totals": totals,
+            "headline": user_views.headline(totals.balance_cents), "month_shots": user_views.month_shots(db, uid),
+            "price_cents": price.price_per_shot_cents if price else None,
+            "events": user_views.event_rows(db, ledger.recent_consumption(db, uid, 20)),
+            "payments": user_views.payment_rows(ledger.recent_payments(db, uid, 20)),
+            "notice": notice, "errors": errors or {}, "min_password_length": get_settings().password_min_length},
+            status_code=status)
+
+
+@router.get("/account")
+def account_page(request: Request, notice: str = "", ctx: UserContext = Depends(deps.require_user)):
+    return _account_page(request, ctx, notice=user_views.notice_key(notice))
+
+
+@router.post("/account/password", dependencies=[Depends(deps.require_csrf)])
+def password_submit(request: Request, current_password: str = Form("", max_length=PASSWORD_FORM_MAX),
+                    password: str = Form("", max_length=PASSWORD_FORM_MAX),
+                    password2: str = Form("", max_length=PASSWORD_FORM_MAX),
+                    ctx: UserContext = Depends(deps.require_user)):
+    if password != password2:
+        return _account_page(request, ctx, errors={"password2": "user.register.error_password_mismatch"}, status=400)
+    wrong = False
+    try:
+        with write_session() as db:
+            try:
+                account.change_password(db, user_id=ctx.user.id, session_id=ctx.session.id,
+                                        current_password=current_password, new_password=password,
+                                        ip=deps.client_ip(request))
+            except InvalidCredentials:
+                wrong = True  # caught inside the block: the recorded failure is committed
+    except RateLimited:
+        return _rate_limited(request)
+    except InvalidPassword as exc:
+        return _account_page(request, ctx, errors={"password": f"user.register.error_password_{exc.context.get('reason')}"},
+                             status=400)
+    except UserInactive:
+        return _message(request, "user.scan.inactive_title", "user.scan.inactive_body", status=403, tone="error")
+    if wrong:
+        return _account_page(request, ctx, errors={"current": "user.password.error_current"}, status=400)
+    return _redirect("/account?notice=password")
 
 
 def _edit_page(request: Request, db: Session, ctx: UserContext, values: dict, errors: dict | None = None,
@@ -392,7 +432,8 @@ def _edit_page(request: Request, db: Session, ctx: UserContext, values: dict, er
     current = db.get(Chair, ctx.user.chair_id)
     return render(request, "user/edit.html", {
         "chairs": user_views.active_chairs(db, include=current), "values": values, "errors": errors or {},
-        "name_max": DISPLAY_NAME_MAX}, status_code=status)
+        "name_max": DISPLAY_NAME_MAX, "chair_locked": user_views.is_group_admin(db, ctx.user.id),
+        "current_chair": current}, status_code=status)
 
 
 @router.get("/account/edit")
@@ -406,6 +447,13 @@ def edit_submit(request: Request, display_name: str = Form(""), chair_id: str = 
                 ctx: UserContext = Depends(deps.require_user)):
     values = {"display_name": display_name[:DISPLAY_NAME_MAX * 2], "chair_id": chair_id[:64]}
     with read_session() as db:
+        if user_views.is_group_admin(db, ctx.user.id):
+            # The form does not offer the chair to a group admin; a submitted different chair is refused outright.
+            if chair_id and deps.parse_uuid(chair_id) != ctx.user.chair_id:
+                return _edit_page(request, db, ctx, {**values, "chair_id": str(ctx.user.chair_id)},
+                                  {"chair": "user.edit.chair_locked"}, status=403)
+            chair_id = str(ctx.user.chair_id)
+            values["chair_id"] = chair_id
         allowed = {c.id for c in user_views.active_chairs(db, include=db.get(Chair, ctx.user.chair_id))}
         name, cid, errors = _check_profile_form(display_name, chair_id, allowed)
         if errors:
@@ -414,7 +462,7 @@ def edit_submit(request: Request, display_name: str = Form(""), chair_id: str = 
         with write_session() as db:
             users.update_profile(db, user_id=ctx.user.id, display_name=name, chair_id=cid, actor_type="user",
                                  ip=deps.client_ip(request))
-    except Forbidden:
+    except Forbidden:  # the role was granted between the form and the submit
         with read_session() as db:
             return _edit_page(request, db, ctx, values, {"chair": "user.edit.chair_locked"}, status=403)
     return _redirect("/account?notice=saved")
