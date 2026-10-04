@@ -2,4 +2,5 @@
 pytest==9.1.1
 httpx==0.28.1
 pytest-playwright==0.9.0
+aiosmtpd==1.4.6
 pip-audit>=2.7  # not installed in the reference venv, so not pinned

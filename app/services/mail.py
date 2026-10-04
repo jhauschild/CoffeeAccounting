@@ -33,6 +33,7 @@ import smtplib
 import socket
 import ssl
 import threading
+import time
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
@@ -280,14 +281,155 @@ class FileMailer:
             raise MailError("other") from exc
 
 
+# ----- smtp backend (task 2.2) ----------------------------------------------------------------------------------
+
+SMTP_CONNECT_TIMEOUT = 10.0  # seconds for connect (and the implicit-TLS handshake)
+SMTP_TOTAL_TIMEOUT = 20.0  # seconds for the whole send, after which the connection is cut
+
+ssl_context_factory: Callable[[], ssl.SSLContext] | None = None  # tests only: trust a generated test CA
+
+
+def default_ssl_context() -> ssl.SSLContext:
+    """Production TLS context: system CA store, certificate chain AND hostname verified, TLS 1.2 minimum."""
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
+def _client_ssl_context() -> ssl.SSLContext:
+    """The injectable factory's context (tests) or the default one. A context that does not verify the
+    certificate and hostname is refused whatever its origin: there is no way to switch verification off."""
+    context = (ssl_context_factory or default_ssl_context)()
+    if context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname:
+        raise MailError("tls")
+    return context
+
+
+def _ehlo_name() -> str:
+    domain = sender_address().rpartition("@")[2]
+    return domain if "." in domain else "localhost"
+
+
+def _category_for(exc: BaseException, stage: str) -> str:
+    """Category of a transport failure. Looks through the exception chain (smtplib wraps socket errors), so a
+    socket timeout reads as `timeout` and a certificate problem as `tls` wherever it surfaced."""
+    chain, seen = [], set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    if any(isinstance(e, (socket.timeout, TimeoutError)) for e in chain):
+        return "timeout"
+    if any(isinstance(e, (ssl.SSLError, ssl.CertificateError)) for e in chain):
+        return "tls"
+    if isinstance(exc, smtplib.SMTPNotSupportedError) and stage == "auth":
+        return "auth"
+    category = categorize_exception(exc)
+    if category == "other":
+        if stage == "starttls":
+            return "tls"
+        if stage == "connect" and isinstance(exc, OSError):
+            return "connect"
+    return category
+
+
 class SmtpMailer:
-    """Stub: the real backend (encrypted credential store, smtplib with verified TLS) is task 2.2."""
+    """Sends through the configured relay with the stored login (`mail_credentials`), read per send.
+
+    * `starttls` (port 587): connect in clear, require the STARTTLS extension, upgrade with a verifying
+      context, EHLO again. `ssl` (port 465): implicit TLS from the first byte.
+    * AUTH is attempted only on an encrypted channel; a server that cannot encrypt gets no credentials and the
+      send fails with category `tls` (no plaintext fallback, no way to turn verification off).
+    * Timeouts: connect `SMTP_CONNECT_TIMEOUT`, whole send `SMTP_TOTAL_TIMEOUT` (a watchdog cuts the socket).
+    * Failures raise `MailError(category)` only (`from None`: server text can echo addresses). The login is
+      never logged and `smtplib` debug output (which would print AUTH data) is never enabled.
+    * Success/failure status is recorded by the caller (`_deliver`), not here.
+    """
 
     def send(self, message: MailMessage) -> None:
-        raise MailError("not_configured")
+        from app.services import mail_credentials  # lazy: mail_credentials imports MailError from this module
+
+        credentials = mail_credentials.load_credentials()  # not_configured / unreadable raise MailError
+        email_message = to_email_message(message)
+        settings = get_settings()
+        context = _client_ssl_context()
+        deadline = time.monotonic() + SMTP_TOTAL_TIMEOUT
+        state: dict = {"client": None, "expired": False}
+
+        def cut() -> None:
+            state["expired"] = True
+            sock = getattr(state["client"], "sock", None)
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+        watchdog = threading.Timer(SMTP_TOTAL_TIMEOUT, cut)
+        watchdog.daemon = True
+        watchdog.start()
+        stage = "connect"
+        try:
+            host, port, name = settings.smtp_host, settings.smtp_port, _ehlo_name()
+            if settings.smtp_security == "ssl":
+                client = smtplib.SMTP_SSL(host, port, local_hostname=name, timeout=SMTP_CONNECT_TIMEOUT,
+                                          context=context)
+            else:
+                client = smtplib.SMTP(host, port, local_hostname=name, timeout=SMTP_CONNECT_TIMEOUT)
+            state["client"] = client
+            try:
+
+                def step_timeout() -> None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError
+                    if client.sock is not None:
+                        client.sock.settimeout(remaining)
+
+                step_timeout()
+                stage = "ehlo"
+                client.ehlo()
+                if settings.smtp_security != "ssl":
+                    stage = "starttls"
+                    if not client.has_extn("starttls"):
+                        raise MailError("tls")
+                    step_timeout()
+                    client.starttls(context=context)
+                    step_timeout()
+                    client.ehlo()
+                stage = "auth"
+                if not isinstance(client.sock, ssl.SSLSocket):
+                    raise MailError("tls")  # never send credentials over an unencrypted channel
+                step_timeout()
+                client.login(credentials.username, credentials.password)
+                stage = "send"
+                step_timeout()
+                client.send_message(email_message, from_addr=sender_address(), to_addrs=[message.to])
+                try:
+                    client.quit()
+                except (smtplib.SMTPException, OSError):
+                    pass  # the message is accepted; a rough goodbye does not matter
+            finally:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+        except MailError:
+            raise
+        except Exception as exc:
+            category = "timeout" if state["expired"] else _category_for(exc, stage)
+            log.debug("smtp send failed: %s (%s)", category, stage)
+            raise MailError(category) from None
+        finally:
+            watchdog.cancel()
 
 
-# Factory slot per backend name; task 2.2 replaces the `smtp` entry.
+# Factory slot per backend name.
 BACKENDS: dict[str, Callable[[], Mailer]] = {
     "smtp": SmtpMailer,
     "console": ConsoleMailer,
