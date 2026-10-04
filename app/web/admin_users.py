@@ -182,6 +182,15 @@ def reverse_event(request: Request, event_id: str, note: str = Form("", max_leng
                       error_path=_detail_path(uid))
 
 
+@router.post("/users/{user_id}/balance", dependencies=[Depends(ad.require_admin_csrf)])
+def balance_preview(request: Request, amount: str = Form("", max_length=20), direction: str = Form("", max_length=8),
+                    note: str = Form("", max_length=NOTE_MAX), uid: uuid.UUID = Depends(ad.global_user_access),
+                    ctx: ad.AdminContext = Depends(ad.require_global_admin)):
+    """Head admin only: preview of "set balance" (the booking happens at the shared step-up confirm route)."""
+    return ad.preview(request, ctx, "set_balance", {"user_id": str(uid), "amount": amount, "direction": direction,
+                                                    "note": note}, error_path=_detail_path(uid))
+
+
 @router.post("/users/{user_id}/rename", dependencies=[Depends(ad.require_admin_csrf)])
 def rename_user(request: Request, display_name: str = Form("", max_length=200),
                 uid: uuid.UUID = Depends(ad.admin_user_access), ctx: ad.AdminContext = Depends(ad.require_admin)):

@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from app.web import admin_deps as ad
-from app.web import admin_login, admin_manage, admin_stepup, admin_users
+from app.web import admin_groups, admin_login, admin_manage, admin_stepup, admin_users
 from tests import factories
 from tests.admin_support import fast_hasher, login_as, make_real_admin, new_client  # noqa: F401
 
@@ -22,7 +22,7 @@ def _calls(dependant):
 
 def collect_routes():
     found = []
-    for module in (admin_login, admin_users, admin_stepup, admin_manage):
+    for module in (admin_login, admin_users, admin_groups, admin_stepup, admin_manage):
         for route in module.router.routes:
             for method in route.methods - {"HEAD", "OPTIONS"}:
                 found.append((method, "/admin" + route.path, set(_calls(route.dependant))))
@@ -66,6 +66,9 @@ POST_DATA = {
     "/admin/chairs/{chair_id}/active": {"active": "1"},
     "/admin/prices": {"price": "0.60"},
     "/admin/qr": {"line": "hello"},
+    "/admin/users/{user_id}/balance": {"amount": "5", "direction": "owes"},
+    "/admin/groups/remittances": {"group_admin_id": "{group_admin_id}", "amount": "5"},
+    "/admin/groups/remittances/{remittance_id}/correct": {"corrected_to": "4"},
     "/admin/stepup/confirm": {"payload": "not-a-payload", "nonce": "x"},
 }
 
@@ -98,6 +101,8 @@ NON_BALANCE_POSTS = {
 PREVIEW_POSTS = {
     "/admin/users/{user_id}/payment", "/admin/users/{user_id}/adjustment",
     "/admin/users/{user_id}/events/{event_id}/reverse", "/admin/users/{user_id}/merge",
+    "/admin/users/{user_id}/balance", "/admin/groups/remittances",
+    "/admin/groups/remittances/{remittance_id}/correct",
 }
 STEPUP_POSTS = {"/admin/stepup/confirm"}
 # Role assignment (task 4.3) is not built yet; it will be added to NON_BALANCE_POSTS then.
@@ -130,7 +135,8 @@ def test_balance_services_are_only_called_from_the_step_up_registry():
     web = Path(__file__).resolve().parent.parent / "app" / "web"
     offenders = [f.name for f in sorted(web.glob("*.py")) if pattern.search(f.read_text())]
     assert offenders == [], f"balance-changing service calls outside the step-up registry: {offenders}"
-    assert set(stepup.REGISTRY) >= {"payment", "adjustment", "reversal", "merge"}
+    assert set(stepup.REGISTRY) >= {"payment", "adjustment", "reversal", "merge", "set_balance", "remittance",
+                                    "remittance_correction"}
 
 
 def test_route_list_matches_the_real_app(app):
@@ -147,8 +153,16 @@ def world(db, chair, other_chair, price):
     other_user = factories.make_user(db, "Bob", other_chair)
     event = factories.add_events(db, user, "single")[0]
     factories.make_payment(db, user, factories.make_admin(db, "global"), 100)
+    from app.services import groups, ledger
+    head = factories.make_admin(db, "global")
+    ga = factories.make_admin(db, "chair", [chair])
+    ledger.add_payment(db, admin=ga, user_id=user.id, amount_cents=1000)
+    remittance = groups.record_remittance(db, head_admin=head, group_admin_id=ga.id, amount_cents=300,
+                                          idempotency_key="world-remit")
+    db.commit()
     ids = {"user_id": user.id, "user2_id": user2.id, "event_id": event.id, "chair_id": chair.id,
-           "other_chair_id": other_chair.id, "other_user_id": other_user.id, "kind": "single"}
+           "other_chair_id": other_chair.id, "other_user_id": other_user.id, "kind": "single",
+           "group_admin_id": ga.id, "remittance_id": remittance.id}
     return ids
 
 

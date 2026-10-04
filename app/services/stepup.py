@@ -47,9 +47,9 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import read_session, write_session
-from app.models import AdminSession, AdminUser, ConsumptionEvent, UsedNonce, User
-from app.money import parse_money
-from app.services import admin_auth, audit, keys, ledger, users
+from app.models import AdminSession, AdminUser, ConsumptionEvent, GroupRemittance, UsedNonce, User
+from app.money import format_money, parse_money
+from app.services import admin_auth, audit, groups, keys, ledger, users
 from app.services.errors import InvalidAmount, InvalidInput, NotFound, ServiceError
 from app.timeutil import ensure_utc, utcnow
 
@@ -110,8 +110,13 @@ class ActionResult:
     path: str                           # where to go after success
     quantity: int | None = None
     note: str | None = None
-    extra: dict[str, str] = field(default_factory=dict)   # label key -> already-plain value (names)
+    extra: dict[str, str] = field(default_factory=dict)   # label key -> already-plain value (names, amounts)
     meta: dict = field(default_factory=dict)              # extra audit metadata (ids, no secrets)
+    show_balance: bool = True                             # False: the person's balance is not what changes
+    words: bool = False                                   # show balances as "Owes X" / "Credit X" (no signs)
+    amount_label: str | None = None                       # string key replacing `admin.stepup.amount`
+    held_before_cents: int | None = None                  # group money held before/after (remittances)
+    held_after_cents: int | None = None
 
 
 @dataclass(frozen=True)
@@ -212,6 +217,11 @@ class ConfirmView:
     balance_after_cents: int
     extra: dict[str, str]
     back_path: str
+    show_balance: bool = True
+    words: bool = False
+    amount_label: str | None = None
+    held_before_cents: int | None = None
+    held_after_cents: int | None = None
 
 
 @dataclass(frozen=True)
@@ -245,7 +255,9 @@ def _view(admin: AdminUser, action: Action, params: dict, nonce: str, ip: str | 
                 kind=action.kind, label=action.label, person=person.display_name, chair=person.chair.short_name,
                 amount_cents=result.amount_cents, quantity=result.quantity, note=result.note,
                 balance_before_cents=before, balance_after_cents=after, extra=dict(result.extra),
-                back_path=action.back_path(params))
+                back_path=action.back_path(params), show_balance=result.show_balance, words=result.words,
+                amount_label=result.amount_label, held_before_cents=result.held_before_cents,
+                held_after_cents=result.held_after_cents)
             out["params"] = params
             raise _DryRunDone  # roll back: a preview persists nothing
     except _DryRunDone:
@@ -492,6 +504,112 @@ register(Action("reversal", "admin.stepup.action.reversal", _parse_reversal, _ex
                 lambda p: _uuid(p.get("user_id"), "user"), lambda p: _detail(p.get("user_id"))))
 register(Action("merge", "admin.stepup.action.merge", _parse_merge, _exec_merge,
                 lambda p: _uuid(p.get("target_id"), "target"), lambda p: f"/admin/users/{p.get('user_id')}/merge"))
+
+
+# ----- actions: set balance (head admin) ----------------------------------------------------------
+class NoChange(InvalidAmount):
+    """The requested target equals the current balance: there is nothing to book."""
+
+    code = "no_change"
+
+
+def _parse_set_balance(db: Session, admin: AdminUser, raw: dict) -> dict:
+    direction = (raw.get("direction") or "").strip()
+    if direction not in ("owes", "credit"):
+        raise InvalidInput("direction must be owes or credit")
+    cents = parse_money(raw.get("amount", ""), allow_negative=False, allow_zero=True)
+    target = cents if direction == "owes" else -cents  # balance = consumed - paid: positive = owes
+    uid = _uuid(raw.get("user_id"), "user")
+    if ledger.get_totals(db, uid).balance_cents == target:
+        raise NoChange("the balance already equals the target")
+    return {"user_id": str(uid), "target_balance_cents": target, "note": _note(raw.get("note"))}
+
+
+def _exec_set_balance(db: Session, admin: AdminUser, params: dict, *, nonce: str, ip, now) -> ActionResult:
+    uid = _uuid(params.get("user_id"), "user")
+    target = params.get("target_balance_cents")
+    if not _int_ok(target):
+        raise InvalidAmount("invalid target balance")
+    payment = ledger.set_balance(db, admin=admin, user_id=uid, target_balance_cents=target,
+                                 idempotency_key=idempotency_key_for(nonce), note=params.get("note"), ip=ip,
+                                 now=now)
+    shown = users.effective_user_id(db, uid) or uid
+    return ActionResult(user_id=shown, balance_user_id=shown, amount_cents=payment.amount_cents,
+                        flash="balance_set", path=_detail(uid), note=params.get("note"), words=True,
+                        amount_label="admin.stepup.booked",
+                        meta={"payment_id": str(payment.id), "target_balance_cents": target})
+
+
+register(Action("set_balance", "admin.stepup.action.set_balance", _parse_set_balance, _exec_set_balance,
+                lambda p: _uuid(p.get("user_id"), "user"), lambda p: _detail(p.get("user_id"))))
+
+
+# ----- actions: remittance (money received from a group admin) and its correction -------------------
+GROUPS_PATH = "/admin/groups"
+
+
+def _group_admin(db: Session, group_admin_id: uuid.UUID) -> AdminUser:
+    target = db.get(AdminUser, group_admin_id)
+    if target is None:
+        raise NotFound("group admin not found")
+    if target.role != "chair" or target.user is None:
+        raise InvalidInput("not a group admin")
+    return target
+
+
+def _parse_remittance(db: Session, admin: AdminUser, raw: dict) -> dict:
+    target = _group_admin(db, _uuid(raw.get("group_admin_id"), "group admin"))
+    cents = parse_money(raw.get("amount", ""), allow_negative=True, allow_zero=False)
+    return {"group_admin_id": str(target.id), "person_id": str(target.user_id), "amount_cents": cents,
+            "note": _note(raw.get("note")), "correction_of": None}
+
+
+def _parse_remittance_correction(db: Session, admin: AdminUser, raw: dict) -> dict:
+    """`corrected_to` is what the entry should have said; the correction books the difference."""
+    entry = db.get(GroupRemittance, _uuid(raw.get("correction_of"), "remittance"))
+    if entry is None:
+        raise NotFound("remittance not found")
+    target = _group_admin(db, entry.group_admin_id)
+    corrected_to = parse_money(raw.get("corrected_to", ""), allow_negative=True, allow_zero=True)
+    delta = corrected_to - entry.amount_cents
+    if delta == 0:
+        raise NoChange("the entry already has this amount")
+    return {"group_admin_id": str(target.id), "person_id": str(target.user_id), "amount_cents": delta,
+            "note": _note(raw.get("note")), "correction_of": str(entry.id)}
+
+
+def _exec_remittance(db: Session, admin: AdminUser, params: dict, *, nonce: str, ip, now) -> ActionResult:
+    gid = _uuid(params.get("group_admin_id"), "group admin")
+    cents = params.get("amount_cents")
+    if not _int_ok(cents):
+        raise InvalidAmount("invalid amount")
+    correction = _optional_uuid(params.get("correction_of"))
+    target = _group_admin(db, gid)
+    original = db.get(GroupRemittance, correction) if correction else None
+    held_before = groups.held(db, gid)
+    remittance = groups.record_remittance(
+        db, head_admin=admin, group_admin_id=gid, amount_cents=cents, idempotency_key=idempotency_key_for(nonce),
+        correction_of_id=correction, note=params.get("note"), ip=ip, now=now)
+    extra = {}
+    if original is not None:
+        extra = {"original": format_money(original.amount_cents), "corrected_to": format_money(original.amount_cents + cents)}
+    return ActionResult(
+        user_id=target.user_id, balance_user_id=target.user_id, amount_cents=cents,
+        flash="remittance_corrected" if correction else "remittance_recorded", path=GROUPS_PATH,
+        note=params.get("note"), extra=extra, show_balance=False,
+        amount_label="admin.stepup.correction" if correction else "admin.stepup.received",
+        held_before_cents=held_before, held_after_cents=groups.held(db, gid),
+        meta={"remittance_id": str(remittance.id), "group_admin_id": str(gid)})
+
+
+def _person_of(params: dict) -> uuid.UUID:
+    return _uuid(params.get("person_id"), "person")
+
+
+register(Action("remittance", "admin.stepup.action.remittance", _parse_remittance, _exec_remittance,
+                _person_of, lambda p: GROUPS_PATH))
+register(Action("remittance_correction", "admin.stepup.action.remittance_correction",
+                _parse_remittance_correction, _exec_remittance, _person_of, lambda p: GROUPS_PATH))
 
 
 # Names of the services that change balances: only registered actions (this module) may call them.

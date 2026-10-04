@@ -189,7 +189,7 @@ def _recent_payments(db: Session, visible, limit: int) -> list[EventRow]:
         .where(*_where(_scope_user_ids(visible, pe.user_id)))
         .order_by(pe.created_at.desc(), pe.id).limit(limit))
     return [EventRow(p.id, p.created_at, p.user_id, name, chair,
-                     "correction" if p.correction_of_id else "payment", None, p.amount_cents, p.note)
+                     "correction" if p.correction_of_id else ("bookkeeping" if p.kind == "bookkeeping" else "payment"), None, p.amount_cents, p.note)
             for p, name, chair in rows]
 
 
@@ -325,6 +325,7 @@ class PaymentRow:
     chair_short: str
     admin_name: str | None
     corrected: bool
+    collector_name: str | None = None  # group admin / admin who collected the cash (admin-only view)
 
 
 @dataclass(frozen=True)
@@ -358,6 +359,15 @@ def _admin_names(db: Session, ids) -> dict[str, str]:
     return {str(a.id): a.username for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(ids)))}
 
 
+def _collector_names(db: Session, ids) -> dict[str, str]:
+    """Collector shown to admins: the linked member's name for a group admin, else the admin username."""
+    ids = {uuid.UUID(str(i)) for i in ids if i}
+    if not ids:
+        return {}
+    return {str(a.id): (a.user.display_name if a.user is not None else a.username)
+            for a in db.scalars(select(AdminUser).where(AdminUser.id.in_(ids)))}
+
+
 def _details(meta: dict | None) -> str:
     if not meta:
         return ""
@@ -387,6 +397,7 @@ def user_detail(db: Session, admin: AdminUser, user_id: uuid.UUID) -> UserDetail
         PaymentEvent.correction_of_id.in_([p.id for p in payments])))) if payments else set()
     chairs = {c.id: c.short_name for c in db.scalars(select(Chair))}
     names = _admin_names(db, [e.admin_id for e in consumption] + [p.admin_id for p in payments])
+    collectors = _collector_names(db, [p.collector_admin_id for p in payments])
 
     entries = db.scalars(
         select(AuditLog).where(or_(
@@ -400,7 +411,8 @@ def user_detail(db: Session, admin: AdminUser, user_id: uuid.UUID) -> UserDetail
         consumption=[ConsumptionRow(e, chairs.get(e.chair_id, "?"), names.get(str(e.admin_id)) if e.admin_id else None,
                                     e.id in reversed_set, e.type != "reversal" and e.id not in reversed_set)
                      for e in consumption],
-        payments=[PaymentRow(p, chairs.get(p.chair_id, "?"), names.get(str(p.admin_id)), p.id in corrected)
+        payments=[PaymentRow(p, chairs.get(p.chair_id, "?"), names.get(str(p.admin_id)), p.id in corrected,
+                              collectors.get(str(p.collector_admin_id)) if p.collector_admin_id else None)
                   for p in payments],
         audit=audit_rows(db, entries),
         active_sessions=sessions.active_session_count(db, user_id),

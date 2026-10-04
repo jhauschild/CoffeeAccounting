@@ -94,7 +94,8 @@ def page_csrf(client: TestClient, path: str) -> str:
 
 
 # ----- step-up (two-step balance changes) ---------------------------------------------------------
-BALANCE_PATH = re.compile(r"^/admin/users/[^/]+/(payment|adjustment|merge|events/[^/]+/reverse)$")
+BALANCE_PATH = re.compile(r"^/admin/users/[^/]+/(payment|adjustment|merge|balance|events/[^/]+/reverse)$"
+                          r"|^/admin/groups/remittances(/[^/]+/correct)?$")
 CONFIRM_PATH = "/admin/stepup/confirm"
 
 

@@ -1,5 +1,5 @@
 {% extends "admin/base.html" %}
-{% from "admin/_macros.html" import bal %}
+{% from "admin/_macros.html" import bal, words %}
 {% block admin_title %}{{ detail.user.display_name }}{% endblock %}
 {% block head_extra %}{{ super() }}<script src="/static/admin/adjust.js" defer></script>{% endblock %}
 {% block admin_content %}
@@ -56,6 +56,25 @@
     <button type="submit">{{ t("admin.detail.adjust_submit") }}</button>
   </form>
 </section>
+
+{% if is_global %}
+<section class="card">
+  <h2>{{ t("admin.setbalance.title") }}</h2>
+  <form method="post" action="{{ base }}/balance" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p class="muted">{{ t("admin.setbalance.hint") }} <strong>{{ words(detail.totals.balance_cents) }}</strong></p>
+    <div class="field"><label for="sb_amount">{{ t("admin.setbalance.amount", currency=settings.currency_symbol) }}</label>
+      <input id="sb_amount" name="amount" type="text" inputmode="decimal" maxlength="20" placeholder="0" required></div>
+    <div class="field"><label for="sb_direction">{{ t("admin.setbalance.direction") }}</label>
+      <select id="sb_direction" name="direction">
+        <option value="owes">{{ t("admin.setbalance.owes") }}</option>
+        <option value="credit">{{ t("admin.setbalance.credit") }}</option></select></div>
+    <div class="field"><label for="sb_note">{{ t("admin.csv.note") }}</label>
+      <input id="sb_note" name="note" type="text" maxlength="{{ note_max }}"></div>
+    <button type="submit" class="button-secondary">{{ t("admin.setbalance.submit") }}</button>
+  </form>
+</section>
+{% endif %}
 
 <section class="card">
   <h2>{{ t("admin.detail.manage") }}</h2>
@@ -122,15 +141,16 @@
 <section class="card">
   <h2>{{ t("admin.detail.payments") }}</h2>
   <div class="table-wrap"><table class="table-cards">
-    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.csv.type") }}</th><th>{{ t("admin.csv.chair") }}</th><th class="num">{{ t("admin.csv.amount") }}</th><th>{{ t("admin.csv.note") }}</th></tr></thead>
+    <thead><tr><th>{{ t("admin.csv.date") }}</th><th>{{ t("admin.csv.type") }}</th><th>{{ t("admin.csv.chair") }}</th><th class="num">{{ t("admin.csv.amount") }}</th><th>{{ t("admin.detail.collected_by") }}</th><th>{{ t("admin.csv.note") }}</th></tr></thead>
     <tbody>
     {% for r in detail.payments %}{% set p = r.payment %}<tr>
       <td data-label="{{ t('admin.csv.date') }}">{{ p.created_at|local }}</td>
-      <td data-label="{{ t('admin.csv.type') }}">{{ t("admin.type.correction") if p.correction_of_id else t("admin.type.payment") }}{% if r.corrected %} <span class="badge">{{ t("admin.detail.corrected") }}</span>{% endif %}</td>
+      <td data-label="{{ t('admin.csv.type') }}">{{ t("admin.type.correction") if p.correction_of_id else t("admin.type.payment") }}{% if p.kind == "bookkeeping" %} <span class="badge">{{ t("admin.type.bookkeeping") }}</span>{% endif %}{% if r.corrected %} <span class="badge">{{ t("admin.detail.corrected") }}</span>{% endif %}</td>
       <td data-label="{{ t('admin.csv.chair') }}">{{ r.chair_short }}</td>
       <td class="num" data-label="{{ t('admin.csv.amount') }}">{{ p.amount_cents|money }}</td>
+      <td data-label="{{ t('admin.detail.collected_by') }}">{{ r.collector_name or "" }}</td>
       <td data-label="{{ t('admin.csv.note') }}">{{ p.note or "" }}{% if r.admin_name %} <span class="muted">({{ r.admin_name }})</span>{% endif %}</td></tr>
-    {% else %}<tr><td colspan="5" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="6" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
     </tbody></table></div>
 </section>
 

@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import AdminUser, Chair, ConsumptionEvent, PaymentEvent, User
 from app.money import format_amount
-from app.services import audit, stats
+from app.services import audit, authz, groups, stats
 from app.strings import t
 from app.timeutil import format_local, utcnow
 
@@ -125,7 +125,7 @@ def ledger_csv(
             csv_text(names.get(e.admin_id, "")), str(e.id)]))
     for p, name, chair in pays:
         entries.append((p.created_at, str(p.id), [
-            _local(p.created_at), csv_text("correction" if p.correction_of_id else "payment"), csv_text(name),
+            _local(p.created_at), csv_text("correction" if p.correction_of_id else ("bookkeeping" if p.kind == "bookkeeping" else "payment")), csv_text(name),
             csv_text(chair), "", "", _money(p.amount_cents), csv_text(p.note), csv_text(names.get(p.admin_id, "")),
             str(p.id)]))
     entries.sort(key=lambda x: (x[0], x[1]))
@@ -136,6 +136,30 @@ def ledger_csv(
                         "to": date_to.isoformat() if date_to else None,
                         "chair_id": str(chair_id) if chair_id else None}, ip=ip)
     return _render(header, [row for _, _, row in entries])
+
+
+def group_balances_csv(db: Session, admin: AdminUser, *, ip: str | None = None) -> bytes:
+    """Group balances per group admin (current and former) and per chair roll-up, signed amounts.
+    Head admin only (`Forbidden`); audited (`export.group_balances_csv`)."""
+    authz.require_global(admin)
+    balances = groups.list_group_balances(db)
+    rollup = groups.chair_rollup(db)
+    header = [t(f"admin.csv.{k}") for k in ("row_kind", "group_admin", "chair", "collected", "handed_over",
+                                            "held", "flag")]
+    rows = []
+    for b in balances:
+        flags = ([] if b.is_current else [t("admin.csv.flag_former")]) + \
+                ([t("admin.csv.flag_negative")] if b.negative else [])
+        rows.append([csv_text(t("admin.csv.kind_admin")), csv_text(b.display_name or b.username),
+                     csv_text(b.chair_short_name or ""), _money(b.collected_cents), _money(b.remitted_cents),
+                     _money(b.held_cents), csv_text("; ".join(flags))])
+    for c in rollup:
+        rows.append([csv_text(t("admin.csv.kind_chair")), "", csv_text(c.chair_short_name),
+                     _money(c.collected_cents), _money(c.remitted_cents), _money(c.held_cents),
+                     csv_text(t("admin.csv.flag_negative") if c.negative else "")])
+    audit.log(db, actor_type="admin", actor_id=admin.id, action="export.group_balances_csv", target_type="export",
+              metadata={"rows": len(rows)}, ip=ip)
+    return _render(header, rows)
 
 
 def csv_filename(kind: str, now: datetime | None = None) -> str:
