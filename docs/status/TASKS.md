@@ -12,7 +12,7 @@ Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
 | 1.1 | Squash migration, models, CHECKs; downgrade/upgrade/alembic check | H | 0.3 | done | 20 new schema tests pass; alembic up/down/up/check clean; 14 v1 test files known-broken, see docs/status/task-1.1.md |
 | 1.2 | Config additions, passwords.py | L | 1.1 | done | settings, passwords.py, keys.py (HKDF); 538 passed at merge |
 | 1.3 | Ledger: kind, idempotency, collector_admin_id, month shots, set_balance | H | 1.1 | done | collector, bookkeeping, set_balance, month shots, own-balance rule; 30 tests |
-| 1.4 | groups.py, remittances, check-ledger additions | H | 1.3 | todo | |
+| 1.4 | groups.py, remittances, check-ledger additions | H | 1.3 | doing | |
 | 1.5 | authz by own chair, overview.py | L | 1.3 | todo | |
 | 2.1 | Mailer interface, memory and file backends, caps | L | 1.2 | todo | |
 | 2.2 | Encrypted credential store, smtp backend, fake-SMTP and credential tests | H | 2.1 | todo | |
@@ -21,7 +21,7 @@ Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
 | 2.5 | Login, forgot/reset, limits, pending-action change, gate removal | H | 2.3 | todo | |
 | 3.1 | User pages and strings for 2.3-2.5 | L | 2.5 | todo | |
 | 3.2 | Scan result page, account page | L | 1.3 | todo | |
-| 4.1 | Admin login for group admins, TOTP enrolment | H | 1.1 | todo | |
+| 4.1 | Admin login for group admins, TOTP enrolment | H | 1.1 | doing | |
 | 4.2 | Step-up dependency and confirm pages | H | 4.1 | todo | |
 | 4.3 | Role button, /admin/admins, sponsor reassign UI | L | 4.1 | todo | |
 | 4.4 | /admin/groups, remittances UI, set balance, CSV | H | 4.2, 1.4 | todo | |
