@@ -35,6 +35,7 @@ from app.services.errors import (
     InvalidInput,
     NoPriceConfigured,
     NotFound,
+    NotReversible,
     PaybackExceedsCredit,
     RateLimited,
     UndoNotAllowed,
@@ -294,7 +295,10 @@ def admin_reverse_event(
     db: Session, *, admin: AdminUser, event_id: uuid.UUID, note: str | None = None, ip: str | None = None,
     now: datetime | None = None,
 ) -> ConsumptionEvent:
-    """Reverse any coffee or adjustment (not a reversal) of an in-scope user, at most once."""
+    """Reverse any coffee or positive adjustment (not a reversal) of an in-scope user, at most once.
+
+    A negative adjustment (quantity <= 0) cannot be reversed: reversal rows must have a negative quantity
+    (table check), so it raises `NotReversible`; book the opposite adjustment instead."""
     now = _now(now)
     event = db.get(ConsumptionEvent, event_id)
     if event is None:
@@ -303,6 +307,8 @@ def admin_reverse_event(
     _ensure_not_own_account(db, admin, event.user_id)
     if event.type == "reversal":
         raise Conflict("a reversal cannot be reversed")
+    if event.quantity <= 0:
+        raise NotReversible("a negative adjustment cannot be reversed; book the opposite adjustment instead")
     if is_reversed(db, event.id):
         raise AlreadyReversed("event has already been reversed")
     reversal = _insert_reversal(db, _make_reversal(event, now=now, admin_id=admin.id, note=clean_note(note)))

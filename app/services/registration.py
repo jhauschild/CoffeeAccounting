@@ -207,13 +207,18 @@ def _email_key(email: str) -> str:
 
 # ----- begin ----------------------------------------------------------------------------------
 def begin_member(db: Session, *, username: str, display_name: str, chair_id: uuid.UUID, email: str, password: str,
-                 privacy_ack: bool, ip: str, now: datetime | None = None) -> RegistrationResult:
+                 privacy_ack: bool, ip: str, now: datetime | None = None,
+                 password_hash: str | None = None) -> RegistrationResult:
     """Validate a member registration and store a `pending_registrations` row (kind member).
 
     Raises `RateLimited`, `InvalidInput` (``context["field"]``: username, display_name, chair, email, password,
     privacy), `InvalidPassword` or `Conflict` (username taken). If the e-mail already belongs to a member
     nothing is stored and the result has ``already_registered=True`` (and no token); otherwise the result
     carries the raw token once. The caller mails `mail_for_registration(result)` after its commit.
+
+    `password_hash`: the web route hashes the password BEFORE it opens the write transaction (final audit M1: no
+    Argon2 under the SQLite write lock) and passes the hash of `password` here; without it the hash is computed
+    inside the caller's transaction (tests, scripts). The password policy is checked either way.
     """
     now = ensure_utc(now) if now is not None else utcnow()
     ip_bucket, ip_limit, ip_window = ratelimit.REGISTRATION
@@ -230,7 +235,7 @@ def begin_member(db: Session, *, username: str, display_name: str, chair_id: uui
     bucket, limit, window = REGISTRATION_EMAIL
     ratelimit.check_rate(db, bucket, _email_key(address), limit, window, now=now)
 
-    password_hash = passwords.hash_password(password)  # also on the known-email path (timing)
+    password_hash = password_hash or passwords.hash_password(password)  # also on the known-email path (timing)
     holder = db.scalar(select(User.id).where(User.email == address))
     if holder is not None:
         audit.log(db, actor_type="system", action="registration.duplicate_email", target_type="user",
@@ -365,7 +370,8 @@ def _active_member(db: Session, user_id: uuid.UUID | None) -> User | None:
 
 
 def begin_guest(db: Session, *, username: str, display_name: str, password: str, sponsor_email: str,
-                privacy_ack: bool, ip: str, now: datetime | None = None) -> GuestRequestResult:
+                privacy_ack: bool, ip: str, now: datetime | None = None,
+                password_hash: str | None = None) -> GuestRequestResult:
     """Validate a guest registration and, if `sponsor_email` belongs to a verified active member, store a
     `pending_registrations` row (kind guest, chair inherited from the sponsor).
 
@@ -375,6 +381,7 @@ def begin_guest(db: Session, *, username: str, display_name: str, password: str,
     member's address, a non-member address, a sponsor with 5 open requests and a deactivated sponsor: a result
     without token and no error. Only the per-IP limit (3 per hour) may raise `RateLimited`.
     The caller mails `mail_for_guest_request(result)` (None when there is nothing to send) after its commit.
+    `password_hash`: a hash computed before the write transaction, as for `begin_member`.
     """
     now = ensure_utc(now) if now is not None else utcnow()
     bucket, limit, window = GUEST_REQUEST_IP
@@ -388,7 +395,7 @@ def begin_guest(db: Session, *, username: str, display_name: str, password: str,
     if privacy_ack is not True:
         raise InvalidInput("the privacy notice must be acknowledged", field="privacy")
 
-    password_hash = passwords.hash_password(password)  # always (timing)
+    password_hash = password_hash or passwords.hash_password(password)  # always (timing)
     neutral = GuestRequestResult(sponsor_email=address, guest_display_name=name, guest_username=normalized)
     sponsor = db.scalar(select(User).where(User.email == address, User.account_kind == "member",
                                            User.verified_at.is_not(None), User.status == "active"))

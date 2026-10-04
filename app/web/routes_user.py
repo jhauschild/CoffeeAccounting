@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import read_session, write_session
 from app.models import COFFEE_KINDS, DISPLAY_NAME_MAX, Chair, ConsumptionEvent
-from app.services import (account, ledger, login, onboarding, pending, prices, recovery, registration, sessions,
-                          users)
+from app.services import (account, ledger, login, onboarding, passwords, pending, prices, ratelimit, recovery,
+                          registration, sessions, users)
 from app.services.errors import (AlreadyReversed, Conflict, Forbidden, InvalidCredentials, InvalidInput, InvalidPassword,
                                  InvalidToken, NoPriceConfigured, NotFound, RateLimited, UserInactive)
 from app.services.mail import send_in_background
@@ -54,6 +54,17 @@ def _message(request: Request, title: str, body: str, *, status: int = 200, tone
 def _unavailable(request: Request) -> Response:
     """Registration and recovery send mail; without a stored mail login they collect nothing (review L2)."""
     return render(request, "user/unavailable.html", {}, status_code=503, headers={"Cache-Control": "no-store"})
+
+
+def _prehash(request: Request, password: str, limit: tuple[str, int, int]) -> str | None:
+    """Argon2 hash of a submitted password, computed BEFORE the write transaction opens (final audit M1: the
+    single SQLite writer must never wait for a hash). None when the address is already over `limit` (the service
+    refuses it before hashing anyway) or the length is out of range (the service refuses it too)."""
+    bucket, cap, window = limit
+    with read_session() as db:
+        if ratelimit.is_limited(db, bucket, ratelimit.ip_key(deps.client_ip(request)), cap, window):
+            return None
+    return passwords.hash_if_acceptable_length(password)
 
 
 def _rate_limited(request: Request) -> Response:
@@ -184,17 +195,13 @@ def login_page(request: Request, notice: str = ""):
 @router.post("/login", dependencies=[Depends(deps.require_csrf)])
 def login_submit(request: Request, username: str = Form("", max_length=FORM_TEXT_MAX),
                  password: str = Form("", max_length=PASSWORD_FORM_MAX)):
-    result = None
+    # start_sign_in manages its own short transactions: Argon2 must not run while the write lock is held.
     try:
-        with write_session() as db:
-            try:
-                result = login.sign_in(db, username=username, password=password, ip=deps.client_ip(request),
-                                       pending_id=deps.pending_id(request), old_session_id=_old_session_id(request))
-            except InvalidCredentials:
-                pass  # caught inside the block: the recorded failure is committed
+        result = login.start_sign_in(username=username, password=password, ip=deps.client_ip(request),
+                                     pending_id=deps.pending_id(request), old_session_id=_old_session_id(request))
     except RateLimited:
         return _rate_limited(request)
-    if result is None:
+    except InvalidCredentials:
         return _login_page(request, username=username, error=True, status=401)
     return _signed_in(request, result)
 
@@ -264,12 +271,14 @@ def register_submit(request: Request, background_tasks: BackgroundTasks,
         return _register_page(request, values=values, errors={"password2": "user.register.error_password_mismatch"},
                               status=400)
     taken: Conflict | None = None
+    password_hash = _prehash(request, password, ratelimit.REGISTRATION)
     try:
         with write_session() as db:
             try:
                 result = registration.begin_member(
                     db, username=username, display_name=display_name, chair_id=deps.parse_uuid(chair_id),
-                    email=email, password=password, privacy_ack=bool(privacy_ack), ip=deps.client_ip(request))
+                    email=email, password=password, privacy_ack=bool(privacy_ack), ip=deps.client_ip(request),
+                    password_hash=password_hash)
                 message = registration.mail_for_registration(result)
             except Conflict as exc:
                 if exc.context.get("reason") != registration.REASON_USERNAME_TAKEN:
@@ -304,12 +313,14 @@ def register_guest_submit(request: Request, background_tasks: BackgroundTasks,
     taken: Conflict | None = None
     message = None
     sponsor_address = None
+    password_hash = _prehash(request, password, registration.GUEST_REQUEST_IP)
     try:
         with write_session() as db:
             try:
                 result = registration.begin_guest(
                     db, username=username, display_name=display_name, password=password,
-                    sponsor_email=sponsor_email, privacy_ack=bool(privacy_ack), ip=deps.client_ip(request))
+                    sponsor_email=sponsor_email, privacy_ack=bool(privacy_ack), ip=deps.client_ip(request),
+                    password_hash=password_hash)
                 message = registration.mail_for_guest_request(result)
                 sponsor_address = result.sponsor_email
             except Conflict as exc:
@@ -439,8 +450,11 @@ def reset_submit(request: Request, token: str, password: str = Form("", max_leng
     if password != password2:
         return _reset_page(request, token, view, error="user.register.error_password_mismatch", status=400)
     try:
-        with write_session() as db:
-            recovery.reset_password(db, token, password, ip=deps.client_ip(request))
+        with read_session() as db:  # token, account and policy checked first; the hash is made with no lock held
+            recovery.check_reset(db, token, password)
+        new_hash = passwords.hash_password(password)
+        with write_session() as db:  # short: re-checks the token and the account, then records the result
+            recovery.reset_password(db, token, password, ip=deps.client_ip(request), new_hash=new_hash)
     except InvalidToken:
         return _invalid_link(request)
     except InvalidPassword as exc:
@@ -494,14 +508,12 @@ def password_submit(request: Request, current_password: str = Form("", max_lengt
     if password != password2:
         return _account_page(request, ctx, errors={"password2": "user.register.error_password_mismatch"}, status=400)
     wrong = False
-    try:
-        with write_session() as db:
-            try:
-                account.change_password(db, user_id=ctx.user.id, session_id=ctx.session.id,
-                                        current_password=current_password, new_password=password,
-                                        ip=deps.client_ip(request))
-            except InvalidCredentials:
-                wrong = True  # caught inside the block: the recorded failure is committed
+    try:  # start_change_password manages its own short transactions: Argon2 must not run under the write lock
+        account.start_change_password(user_id=ctx.user.id, session_id=ctx.session.id,
+                                      current_password=current_password, new_password=password,
+                                      ip=deps.client_ip(request))
+    except InvalidCredentials:
+        wrong = True
     except RateLimited:
         return _rate_limited(request)
     except InvalidPassword as exc:

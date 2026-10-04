@@ -103,6 +103,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     _configure_logging(settings.log_level)
     production = settings.is_production
+    if production and not settings.trusted_proxies:
+        log.warning("TRUSTED_PROXY_IPS is empty: X-Forwarded-For is ignored and the client address is the connecting "
+                    "peer. Behind a reverse proxy (the documented setup) every visitor then shares the proxy's "
+                    "address, so ONE rate-limit bucket: 20 failed sign-ins lock out every visitor for 15 minutes. "
+                    "Set TRUSTED_PROXY_IPS to the proxy's address or network (README, \"Trusted proxy addresses\"). "
+                    "Leave it empty only when no proxy sits in front of the app.")
     app = FastAPI(
         title=settings.app_title,
         debug=False,

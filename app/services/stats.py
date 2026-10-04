@@ -419,7 +419,8 @@ def user_detail(db: Session, admin: AdminUser, user_id: uuid.UUID) -> UserDetail
         user=user,
         totals=ledger.get_totals(db, user_id),
         consumption=[ConsumptionRow(e, chairs.get(e.chair_id, "?"), names.get(str(e.admin_id)) if e.admin_id else None,
-                                    e.id in reversed_set, e.type != "reversal" and e.id not in reversed_set)
+                                    e.id in reversed_set,
+                                    e.type != "reversal" and e.quantity > 0 and e.id not in reversed_set)
                      for e in consumption],
         payments=[PaymentRow(p, chairs.get(p.chair_id, "?"), names.get(str(p.admin_id)), p.id in corrected,
                               collectors.get(str(p.collector_admin_id)) if p.collector_admin_id else None)

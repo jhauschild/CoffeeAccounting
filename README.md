@@ -58,7 +58,7 @@ Health endpoints: `GET /healthz` (process is up) and `GET /readyz` (database rea
 > Identity is a verified TUM email (members) or a member's vouching (guests), plus a password. It does not prove the user's real-world identity. This is intentional for a low-stakes, trust-based departmental coffee ledger.
 
 - A **member** is someone who confirmed a university email address (`ALLOWED_EMAIL_DOMAINS`, default `tum.de`, `mytum.de`, `*.tum.de`). A **guest** has no email of their own: a verified member, the **sponsor**, vouches for them.
-- Sign-in is **username and password** at `/login` (Argon2id; one generic failure message; 5 failures per 15 minutes per username and IP, plus a per-IP cap, stored in the database). A browser stays signed in through a random 256-bit session cookie (`coffee_session`, HttpOnly, Secure, SameSite=Lax, 180 days by default); only its SHA-256 hash is stored. A lost cookie is replaced by signing in again.
+- Sign-in is **username and password** at `/login` (Argon2id; one generic failure message; 5 failures per 15 minutes per username and IP, plus a per-IP cap of 20 failures, and a per-IP cap of 60 SUCCESSFUL sign-ins per 10 minutes, all stored in the database; password hashing never runs while the database write lock is held, so sign-ins cannot stall scans). A browser stays signed in through a random 256-bit session cookie (`coffee_session`, HttpOnly, Secure, SameSite=Lax, 180 days by default); only its SHA-256 hash is stored. A lost cookie is replaced by signing in again.
 - Administrators use a separate cookie (`coffee_admin`, `Path=/admin`, 12 hours by default). A user cookie alone never reaches `/admin`. Every administrative action goes to the append-only audit log.
 - The email and the sponsor only prove membership; they say nothing about who is typing. Different TUM aliases of one person can create two accounts; admins can merge them.
 
@@ -114,7 +114,7 @@ The URLs come from `PUBLIC_BASE_URL`; reprint if it changes.
 
 ## Local development
 
-Python 3.12 or newer.
+Python 3.13 (the version the tests and the Docker image use).
 
 ```bash
 python3 -m venv .venv
@@ -137,7 +137,7 @@ Tests (file-based SQLite, no external services, no real mail):
 python -m pytest -q
 ```
 
-The end-to-end browser test needs Chromium (`playwright install chromium`); it is skipped when no browser can be launched. Dependency audit: `pip-audit -r requirements.txt`.
+The end-to-end browser test needs Chromium (`playwright install chromium`); it is skipped when no browser can be launched. Dependency audit: `pip-audit -r requirements.lock` (the lock file is what the image installs; see [Reproducible build](#reproducible-build)).
 
 ## Configuration
 
@@ -149,7 +149,7 @@ Set in `.env` (see `.env.example`, which documents each one). The defaults are t
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | public address; content of the QR codes and mailed links; https in production |
 | `DATABASE_URL` | `sqlite:///./data/coffee.db` | SQLite only; Compose forces `sqlite:////data/coffee.db` |
 | `SECRET_KEY` | dev value | signs tokens and cookies and derives the mail-login key; random, at least 32 characters in production; changing it makes the stored mail login unreadable (run `setup-mail` again) and invalidates admin recovery codes |
-| `TRUSTED_PROXY_IPS` | empty | IPs/CIDRs whose `X-Forwarded-*` are trusted |
+| `TRUSTED_PROXY_IPS` | empty | IPs/CIDRs whose `X-Forwarded-*` are trusted; set it behind a proxy, otherwise all visitors share one rate-limit bucket (see [step 4](#4-trusted-proxy-addresses)) |
 | `SESSION_LIFETIME_DAYS` | `180` | user browser session lifetime |
 | `ADMIN_SESSION_HOURS` | `12` | admin session lifetime |
 | `ADMIN_BOOTSTRAP_USERNAME`, `ADMIN_BOOTSTRAP_PASSWORD` | empty | creates the first head admin at start, ignored once any admin exists; `setup` is the preferred way |
@@ -269,7 +269,11 @@ Allow only SSH, 80 and 443 inbound (for example `ufw allow OpenSSH && ufw allow 
 docker network inspect "$(basename "$PWD")_default" --format '{{ (index .IPAM.Config 0).Subnet }}'
 ```
 
-Put that subnet (for example `172.18.0.0/16`) into `TRUSTED_PROXY_IPS`, then `docker compose up -d`. Leave it empty if nothing proxies in front. To check it: fail one admin login and confirm the audit log shows your address as the source IP, not a `172.x` address.
+Put that subnet (for example `172.18.0.0/16`) into `TRUSTED_PROXY_IPS`, then `docker compose up -d`. Leave it empty only if nothing proxies in front. `docker-compose.yml` has a commented alternative that pins the compose network to a fixed subnet (`172.28.0.0/16`), so the value is known before the first start. Forwarded headers are never trusted by default.
+
+**Symptom of an empty list behind a proxy:** the application sees the proxy's address for every visitor, so all visitors share one rate-limit bucket (sign-in, registration, password reset and admin login are limited per address). Twenty failed sign-ins from anybody then lock out everybody, including people with the correct password, for 15 minutes, and every audit entry shows the proxy's `172.x` address. The application warns about it: once at start in production when the list is empty (`TRUSTED_PROXY_IPS is empty: ...` in `docker compose logs app`), and at most once per hour when a request arrives with `X-Forwarded-For` from a peer that is not trusted. Seeing either line behind a proxy means this setting is missing or wrong.
+
+To check it: fail one admin login and confirm the audit log shows your address as the source IP, not a `172.x` address. `scripts/smoke.sh` cannot see this (it talks to the public URL and never reads the audit log), so run the check by hand once after every change of the proxy or the compose network.
 
 ### 5. Check the instance
 
@@ -281,10 +285,25 @@ SMOKE_USERNAME='<test account>' SMOKE_PASSWORD='<its password>' scripts/smoke.sh
 
 The public run checks that `/register` and `/login` answer 200, that an anonymous `/overview` redirects to `/login` with `Cache-Control: no-store`, that a GET of `/coffee/single` sets no cookie and writes nothing, and that `/admin` is not open. The signed-in run needs a price and an existing verified test account (register one through `/register`) and **writes to the ledger**: it scans without a session, signs in (which records the pending single), records a double, replays a POST, reads the site pages and undoes what the undo window allows. Deactivate that account afterwards in `/admin/users`.
 
+### Reproducible build
+
+`requirements.txt` lists the direct runtime dependencies (all pinned with `==`) and is what development uses (`requirements-dev.txt` adds the test tools). The Docker image does **not** install from it: it installs `requirements.lock`, a fully pinned file with every direct and transitive package and the SHA-256 of every release file, with `pip install --require-hashes --no-deps -r requirements.lock`. pip refuses any file whose hash is not listed, so a build on another day cannot pick up a newer starlette or a replaced package.
+
+How the lock file was made (the command is also the first comment line of the file):
+
+```bash
+uv pip compile requirements.txt --universal --generate-hashes --python-version 3.13 -o requirements.lock
+# without uv: pip install pip-tools && pip-compile --generate-hashes --allow-unsafe -o requirements.lock requirements.txt
+```
+
+`--universal` makes one file that works on Linux x86-64 and arm64 (and other platforms, with environment markers). Regenerate it after every change of `requirements.txt` and when `pip-audit -r requirements.lock` reports a vulnerability (`uv pip compile --upgrade-package <name> ...` bumps one package), then run the test suite and `pip-audit -r requirements.lock` again. `tests/test_final_f6.py` fails if a package of `requirements.txt` is missing from the lock or has no hash, or if the Dockerfile stops using it.
+
+The base image is `python:3.13-slim`, the interpreter minor the tests run on. A tag moves; **pin the base image by digest when you build for production** (a digest could not be looked up where this was written, no registry access): `docker buildx imagetools inspect python:3.13-slim` prints it, then change the first line of the `Dockerfile` to `FROM python:3.13-slim@sha256:<digest>` and update it deliberately when you want a newer base.
+
 ### Without Docker
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock
 set -a; . ./.env; set +a
 .venv/bin/alembic upgrade head
 sh scripts/run.sh          # one uvicorn worker; run it under systemd or similar
@@ -403,7 +422,7 @@ Read the release notes and `.env.example` for new variables first. If something 
 - No external services, CDNs, fonts, trackers or analytics. The only outbound connection is the SMTP connection to the mail server.
 - Secrets: `SECRET_KEY` lives only in `.env` (mode 600, not in the image or the repository); the mail login only encrypted in the `secrets` volume; tokens, passwords and TOTP secrets are never logged. Keys for signing, CSRF and mail-login encryption are derived separately (HKDF).
 - Keep the host patched, the proxy as the only public listener, `/admin` restricted by IP where possible, and backups readable only by the operator.
-- Dependencies: run `pip-audit -r requirements.txt` before each release.
+- Dependencies: the image installs the hashed `requirements.lock`; run `pip-audit -r requirements.lock` before each release and regenerate the lock when it reports something (see [Reproducible build](#reproducible-build)).
 
 ## Known limitations
 

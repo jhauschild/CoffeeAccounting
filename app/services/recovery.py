@@ -135,12 +135,27 @@ def peek_reset(db: Session, raw_token: str | None, now: datetime | None = None) 
     return ResetView(user.username or "", user.display_name, user.account_kind == "guest", ensure_utc(row.expires_at))
 
 
+def check_reset(db: Session, raw_token: str | None, new_password: str, *, now: datetime | None = None) -> None:
+    """Read-only first half of `reset_password`: raises `InvalidToken` or `InvalidPassword` exactly as it would,
+    writes nothing. The web route calls it in a read session, hashes the password with no lock held, and then
+    calls `reset_password(..., new_hash=...)` in a short write transaction (final audit M1)."""
+    now = ensure_utc(now) if now is not None else utcnow()
+    found = _find(db, raw_token, now)
+    if found is None:
+        raise InvalidToken("reset link is invalid or expired")
+    _row, user = found
+    passwords.validate_policy(new_password, user.username or "", user.email)
+
+
 def reset_password(db: Session, raw_token: str | None, new_password: str, *, ip: str | None = None,
-                   now: datetime | None = None) -> User:
+                   now: datetime | None = None, new_hash: str | None = None) -> User:
     """Set the new password, consume the token and revoke every session of the account, in ONE transaction.
 
     Raises `InvalidToken` (unknown, expired, used, or the account can no longer sign in) or `InvalidPassword`
     (policy; the token is then NOT consumed because the caller's transaction is rolled back).
+    `new_hash`: the Argon2 hash of `new_password` computed before the write transaction (see `check_reset`);
+    without it the hash is computed here, inside the caller's transaction (tests, scripts). Whatever the hash
+    came from, the token, the account state and the policy are checked again inside the transaction.
     """
     now = ensure_utc(now) if now is not None else utcnow()
     found = _find(db, raw_token, now)
@@ -148,7 +163,7 @@ def reset_password(db: Session, raw_token: str | None, new_password: str, *, ip:
         raise InvalidToken("reset link is invalid or expired")
     row, user = found
     passwords.validate_policy(new_password, user.username or "", user.email)
-    new_hash = passwords.hash_password(new_password)
+    new_hash = new_hash or passwords.hash_password(new_password)
     consumed = db.execute(
         update(PasswordResetToken)
         .where(PasswordResetToken.id == row.id, PasswordResetToken.consumed_at.is_(None),

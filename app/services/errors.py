@@ -60,6 +60,13 @@ class Conflict(ServiceError):
     code = "conflict"
 
 
+class NotReversible(Conflict):
+    """An event that cannot be reversed (a negative adjustment: its reversal would break the table check that
+    reversal rows have a negative quantity). The admin books the opposite adjustment instead."""
+
+    code = "not_reversible"
+
+
 class RateLimited(ServiceError):
     code = "rate_limited"
 

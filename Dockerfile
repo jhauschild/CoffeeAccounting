@@ -1,5 +1,7 @@
 # Coffee ledger: single-process FastAPI app (SQLite). Build: docker build -t coffee-ledger .
-FROM python:3.12-slim
+# Same interpreter minor as the one the test suite runs on (3.13). For a reproducible build pin the base image by
+# digest at build time (README, "Reproducible build"): FROM python:3.13-slim@sha256:<digest>
+FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,9 +12,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Dependencies first (cached layer); runtime requirements only, no dev/test packages.
-COPY requirements.txt ./
-RUN pip install -r requirements.txt \
+# Dependencies first (cached layer): the fully pinned, hashed runtime lock file (direct and transitive packages,
+# every artifact checked by SHA-256; pip refuses anything not in the file). No dev/test packages.
+# requirements.txt lists the direct dependencies for development; regenerate the lock with the command at the top
+# of requirements.lock whenever it changes (README, "Reproducible build").
+COPY requirements.lock ./
+RUN pip install --require-hashes --no-deps -r requirements.lock \
  && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app \
  && mkdir /data /backups \
  && chown app:app /data /backups \

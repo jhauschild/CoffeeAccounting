@@ -11,6 +11,8 @@ from __future__ import annotations
 import ipaddress
 import logging
 import secrets
+import threading
+import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -74,12 +76,37 @@ def _is_trusted(ip: str, trusted) -> bool:
     return any(addr in net for net in trusted)
 
 
+UNTRUSTED_FORWARDED_WARN_INTERVAL = 3600.0  # seconds between two "untrusted X-Forwarded-For" warnings
+_forwarded_warned_at: float | None = None
+_forwarded_lock = threading.Lock()
+
+
+def _warn_untrusted_forwarded(peer: str) -> None:
+    """Production only, at most once per hour: a request carried `X-Forwarded-For` but its peer is not in
+    TRUSTED_PROXY_IPS, so the header is ignored. Behind a reverse proxy that means every visitor shares the
+    proxy's address (one rate-limit bucket: 20 failed sign-ins lock everybody out; final audit L2). Nothing the
+    client sent is logged, only the connecting peer."""
+    global _forwarded_warned_at
+    now = time.monotonic()
+    with _forwarded_lock:
+        if _forwarded_warned_at is not None and now - _forwarded_warned_at < UNTRUSTED_FORWARDED_WARN_INTERVAL:
+            return
+        _forwarded_warned_at = now
+    log.warning("a request carried X-Forwarded-For but its peer %s is not in TRUSTED_PROXY_IPS, so the header is "
+                "ignored and the client address is the peer's. Behind a reverse proxy this makes all visitors share "
+                "one rate-limit bucket. Put the proxy's address or network into TRUSTED_PROXY_IPS (README, "
+                "\"Trusted proxy addresses\"). This message is logged at most once per hour.", peer or "unknown")
+
+
 def client_ip(request: Request) -> str:
     """Peer address; `X-Forwarded-For` is honored only when the peer is in TRUSTED_PROXY_IPS
     (the right-most address that is not itself a trusted proxy is used)."""
     peer = request.client.host if request.client else ""
-    trusted = get_settings().trusted_proxies
+    settings = get_settings()
+    trusted = settings.trusted_proxies
     if not trusted or not _is_trusted(peer, trusted):
+        if settings.is_production and request.headers.get("x-forwarded-for"):
+            _warn_untrusted_forwarded(peer)
         return peer or "unknown"
     forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
     for candidate in reversed(forwarded):

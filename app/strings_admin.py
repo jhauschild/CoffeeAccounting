@@ -272,6 +272,7 @@ STRINGS: dict[str, str] = {
     "admin.err.invalid_input": "Some of the entered data is not valid.",
     "admin.err.conflict": "This conflicts with an existing entry or a change made in the meantime.",
     "admin.err.already_reversed": "This event has already been reversed.",
+    "admin.err.not_reversible": "A negative adjustment cannot be reversed. Book the opposite adjustment instead.",
     "admin.err.no_price": "No price is configured; enter the amount explicitly.",
     "admin.err.no_change": "Nothing to book: the value is already the same.",
     "admin.err.not_found": "Not found.",

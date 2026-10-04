@@ -7,6 +7,12 @@
 #
 # BASE_URL defaults to $BASE_URL or http://localhost:8000. CURL_OPTS adds curl options (e.g. "--cacert ca.pem").
 #
+# NOT covered here: TRUSTED_PROXY_IPS. Behind a reverse proxy with the list empty every visitor shares one
+# rate-limit bucket (20 failed sign-ins lock everybody out), and this script cannot tell because it never reads
+# the audit log. After the first deployment and after any change of the proxy or the compose network, fail one
+# admin login by hand and check that the audit log shows your own address, not a 172.x one (README step 4); the
+# app also logs a warning at start in production when the list is empty.
+#
 # Public checks (no account needed): GET /register and /login answer 200, an anonymous GET /overview
 # redirects to /login with Cache-Control: no-store (it parks one `view_site` pending action, the only write),
 # an anonymous GET /coffee/single answers 200 and sets no cookie (a GET never writes), /admin is not open.

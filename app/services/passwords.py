@@ -63,6 +63,15 @@ def verify_and_rehash(password_hash: str, password: str) -> tuple[bool, str | No
     return True, (hash_password(password) if needs_rehash(password_hash) else None)
 
 
+def hash_if_acceptable_length(password: str) -> str | None:
+    """Argon2id hash for a caller that must hash BEFORE it opens its write transaction (registration, reset,
+    password change): None when the length is outside `PASSWORD_MIN_LENGTH..128`, because the service then
+    refuses the password before it would hash anyway (a refused password must not cost an Argon2 run)."""
+    if not isinstance(password, str) or not (get_settings().password_min_length <= len(password) <= MAX_PASSWORD_LENGTH):
+        return None
+    return get_hasher().hash(password)
+
+
 def verify_dummy(password: str) -> None:
     """Burn comparable time for unknown usernames so timing does not reveal them."""
     s = get_settings()

@@ -31,6 +31,7 @@ MAX_KEY_LENGTH = 200
 REGISTRATION = ("register", 10, 60 * 60)               # per IP
 LOGIN_FAILURES = ("login", 5, 15 * 60)                 # per username+IP
 LOGIN_FAILURES_IP = ("login_ip", 20, 15 * 60)          # per IP, across usernames
+LOGIN_SUCCESS_IP = ("login_ok_ip", 60, 10 * 60)        # SUCCESSFUL sign-ins per IP (a loop of valid sign-ins is abuse)
 USERNAME_PROBE = ("username_probe", 10, 15 * 60)       # "username taken" answers per IP (registration forms)
 RESET_USER = ("reset_user", 3, 60 * 60)                # reset requests per username
 RESET_IP = ("reset_ip", 10, 60 * 60)                   # reset requests per IP
