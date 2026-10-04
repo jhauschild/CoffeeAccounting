@@ -198,20 +198,26 @@ def test_secrets_absent_from_audit_metadata(app, db, chair):
     from app.models import AdminSession, AdminUser, AuditLog
     from tests.admin_support import PASSWORD, current_code, make_real_admin
 
-    admin_id, secret = make_real_admin()
+    admin_id, _ = make_real_admin(totp=False)
     c = TestClient(app, raise_server_exceptions=False)
     page = c.get("/admin/login")
     c.post("/admin/login", data={"csrf_token": field(page.text, "csrf_token"), "username": "boss", "password": "bad!"})
     c.post("/admin/login", data={"csrf_token": field(page.text, "csrf_token"), "username": "boss",
                                  "password": PASSWORD})
-    c.post("/admin/totp", data={"csrf_token": field(c.get("/admin/totp").text, "csrf_token"),
-                                "code": current_code(secret)})
+    with write_session() as w:
+        secret = admin_auth.begin_enrollment(w, w.get(AdminUser, admin_id))
+    done = c.post("/admin/totp/setup", data={"csrf_token": field(c.get("/admin/totp/setup").text, "csrf_token"),
+                                             "code": current_code(secret)})
+    assert done.status_code == 200
+    codes = re.findall(r"<code>([A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4})</code>", done.text)
+    assert len(codes) == 8
     with write_session() as w:
         admin_auth.reset_totp(w, w.get(AdminUser, admin_id))
         sessions = [(s.token_hash, s.csrf_secret) for s in w.scalars(select(AdminSession))]
         dump = repr([(a.action, a.meta) for a in w.scalars(select(AuditLog))])
     assert "admin.login.success" in dump
-    for needle in [PASSWORD, "bad!", secret, current_code(secret), *[x for pair in sessions for x in pair]]:
+    assert "admin.totp_enrolled" in dump
+    for needle in [PASSWORD, "bad!", secret, current_code(secret), *codes, *[x for pair in sessions for x in pair]]:
         assert needle not in dump
     assert Path(ROOT / ".gitignore").read_text().count(".env") >= 1
 

@@ -1,16 +1,19 @@
-"""Administrator accounts, passwords, TOTP and admin sessions (PROMPT §6, §7, §9).
+"""Administrator accounts, passwords, TOTP enrolment and admin sessions (PLAN-v2 section 4).
 
-* Passwords: Argon2id (`argon2-cffi` default type), minimum 12 characters.
+* Two kinds of admin log in at `/admin/login`: a CLI admin (`admin_users.password_hash`, Argon2id,
+  username unique among admins) and a group admin (role `chair`, linked to a user account through
+  `admin_users.user_id`): the identifier is then the account username and the password checked is
+  the account password (`users.password_hash`). A linked user must be active and verified.
 * Sessions: separate table, random 256-bit token (only its SHA-256 is stored), absolute expiry
-  `ADMIN_SESSION_HOURS`. A login first yields a short-lived *pending* session
-  (`totp_verified = False`); the second factor (or enrollment) swaps it for a full session with
-  a **new** token (rotation). Without a required/enabled TOTP the password step yields a full
-  session directly.
-* TOTP: `pyotp`, 8 single-use recovery codes stored as keyed hashes. Codes cannot be replayed
-  within their validity window.
-* Rate limiting: password and TOTP failures share one bucket per username+IP plus a per-IP cap
-  across usernames, stored in the database (`ratelimit.ADMIN_LOGIN_FAILURES[_IP]`). Rate-limited
-  attempts are audited once per window and username+IP.
+  `ADMIN_SESSION_HOURS`. A correct password login creates a FULL session with `stepup_until = NULL`;
+  there is no TOTP prompt at login. A TOTP step-up (task 4.2) later opens `stepup_until`;
+  `has_open_stepup` tells whether it is open.
+* TOTP: `pyotp`, enrolled once (`begin_enrollment` / `complete_enrollment`, 8 single-use recovery
+  codes stored as keyed hashes). While `BALANCE_TOTP_REQUIRED` is true an admin without TOTP is
+  confined to the enrolment pages (`enrolment_required`). Codes cannot be replayed within 120 s.
+* Rate limiting: password failures (and failed enrolment codes) share one bucket per
+  username+IP plus a per-IP cap across usernames, stored in the database
+  (`ratelimit.ADMIN_LOGIN_FAILURES[_IP]`). Rate-limited attempts are audited once per window.
 * Every login attempt is audited; neither passwords, codes nor tokens are ever logged.
 
 Login functions never raise for bad credentials: they record the failure (rate-limit hit and
@@ -25,35 +28,28 @@ import hashlib
 import re
 import secrets
 import uuid
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import pyotp
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import write_session
-from app.models import ADMIN_ROLES, AdminSession, AdminUser, Chair
-from app.services import audit, ratelimit, signing
+from app.models import ADMIN_ROLES, AdminSession, AdminUser, User
+from app.services import audit, passwords, ratelimit, signing
 from app.services.errors import Conflict, InvalidInput, NotFound
 from app.timeutil import ensure_utc, utcnow
 
 ADMIN_COOKIE = "coffee_admin"
-MIN_PASSWORD_LENGTH = 12
-MAX_PASSWORD_LENGTH = 256
+MIN_PASSWORD_LENGTH = 12  # CLI admins; group admins follow the account password policy
+MAX_PASSWORD_LENGTH = passwords.MAX_PASSWORD_LENGTH
 MAX_USERNAME_LENGTH = 64
-PENDING_SESSION_TTL = timedelta(minutes=10)
 TOUCH_INTERVAL = timedelta(minutes=10)
 RECOVERY_CODE_COUNT = 8
 MAX_RAW_TOKEN_LENGTH = 100
 TOTP_REPLAY_WINDOW_SECONDS = 120
-
-_hasher = PasswordHasher()  # Argon2id
-_dummy_hash: str | None = None
 
 
 def _now(now: datetime | None) -> datetime:
@@ -81,25 +77,13 @@ def validate_password(password: str) -> str:
 
 
 def hash_password(password: str) -> str:
-    return _hasher.hash(validate_password(password))
+    """Argon2id hash of a CLI admin password (policy: 12..128 characters)."""
+    return passwords.hash_password(validate_password(password))
 
 
 def verify_password(password_hash: str, password: str) -> bool:
     """False for a wrong password and for hashes that are not Argon2 (e.g. disabled "!")."""
-    if not isinstance(password, str) or len(password) > MAX_PASSWORD_LENGTH:
-        return False
-    try:
-        return _hasher.verify(password_hash, password)
-    except (VerificationError, InvalidHashError):
-        return False
-
-
-def _verify_against_dummy(password: str) -> None:
-    """Burn comparable time for unknown usernames so timing does not reveal them."""
-    global _dummy_hash
-    if _dummy_hash is None:
-        _dummy_hash = _hasher.hash(secrets.token_urlsafe(16))
-    verify_password(_dummy_hash, password)
+    return passwords.verify_password(password_hash, password)
 
 
 # ----- accounts -------------------------------------------------------------------------------
@@ -122,39 +106,36 @@ def any_admin_exists(db: Session) -> bool:
     return db.scalar(select(func.count()).select_from(AdminUser)) > 0
 
 
-def _resolve_chairs(db: Session, chairs: Iterable) -> list[Chair]:
-    found: dict[uuid.UUID, Chair] = {}
-    for item in chairs:
-        chair = item if isinstance(item, Chair) else db.get(Chair, item)
-        if chair is None:
-            raise NotFound("chair not found")
-        found[chair.id] = chair
-    return list(found.values())
-
-
 def _sys(admin_actor: AdminUser | None) -> tuple[str, str | None]:
     return audit.admin_actor(admin_actor)
 
 
+def is_group_admin(admin: AdminUser) -> bool:
+    """A group admin (role `chair`) signs in with the password of the linked user account."""
+    return admin.user_id is not None
+
+
 def create_admin(
-    db: Session, *, username: str, password: str, role: str, chairs: Iterable = (),
+    db: Session, *, username: str, password: str, role: str,
     actor: AdminUser | None = None, ip: str | None = None, source: str = "cli", now: datetime | None = None,
 ) -> AdminUser:
-    """Create an administrator (CLI/bootstrap use; `actor=None` is the system actor)."""
+    """Create a CLI administrator (`actor=None` is the system actor).
+
+    Only role `global` is available from this path: group admins are promoted members (task 4.3).
+    A username that a user account already holds is refused (the login identifier must be unique).
+    """
     now = _now(now)
     username = clean_username(username)
     if role not in ADMIN_ROLES:
         raise InvalidInput("role must be 'global' or 'chair'")
-    chair_list = _resolve_chairs(db, chairs)
-    if role == "chair":  # v2 (task 1.1): needs a linked user account (admin_users.user_id); built in task 4.x
-        raise InvalidInput("group admins are created from a user account; not available from this path yet")
-    if role == "chair" and not chair_list:
-        raise InvalidInput("a chair administrator needs at least one chair")
-    if role == "global" and chair_list:
-        raise InvalidInput("global administrators are not tied to chairs")
+    if role == "chair":  # needs a linked user account (admin_users.user_id); built in task 4.3
+        raise InvalidInput("group admins are promoted from a member account; not available from this path yet")
+    normalized = normalize_username(username)
     if get_by_username(db, username) is not None:
         raise Conflict("an administrator with this username already exists")
-    admin = AdminUser(username=username, username_normalized=normalize_username(username),
+    if db.scalar(select(User.id).where(User.username_normalized == normalized)) is not None:
+        raise Conflict("a user account with this username already exists")
+    admin = AdminUser(username=username, username_normalized=normalized,
                       password_hash=hash_password(password), role=role, active=True, recovery_codes=[],
                       created_at=now)
     db.add(admin)
@@ -162,9 +143,7 @@ def create_admin(
     db.refresh(admin)
     actor_type, actor_id = _sys(actor)
     audit.log(db, actor_type=actor_type, actor_id=actor_id, action="admin.created", target_type="admin",
-              target_id=admin.id,
-              metadata={"username": username, "role": role, "chairs": sorted(c.short_name for c in chair_list),
-                        "source": source},
+              target_id=admin.id, metadata={"username": username, "role": role, "source": source},
               ip=ip, now=now)
     return admin
 
@@ -184,16 +163,15 @@ def bootstrap_admin(db: Session, *, now: datetime | None = None) -> AdminUser | 
                         role="global", source="bootstrap", now=now)
 
 
-def set_admin_chairs(db: Session, admin: AdminUser, chairs: Iterable, *, actor: AdminUser | None = None,
-                     ip: str | None = None) -> AdminUser:
-    # v2 (task 1.1): admin_chairs is gone; a group admin's chair is the chair of their linked user.
-    raise InvalidInput("chair assignments were removed in v2; group admins use their own user's chair")
-
-
 def reset_password(db: Session, admin: AdminUser, new_password: str, *, actor: AdminUser | None = None,
                    ip: str | None = None, now: datetime | None = None) -> AdminUser:
-    """Set a new password and revoke every session of the admin (CLI `reset-admin-password`)."""
+    """Set a new password and revoke every session of the admin (CLI `reset-admin-password`).
+
+    Only for CLI admins: a group admin's password is their account password (forgot-password flow).
+    """
     now = _now(now)
+    if is_group_admin(admin):
+        raise InvalidInput("a group admin's password is the account password; use the forgot-password flow")
     admin.password_hash = hash_password(new_password)
     revoked = revoke_admin_sessions(db, admin.id, now=now)
     db.flush()
@@ -205,7 +183,7 @@ def reset_password(db: Session, admin: AdminUser, new_password: str, *, actor: A
 
 def reset_totp(db: Session, admin: AdminUser, *, actor: AdminUser | None = None, ip: str | None = None,
                now: datetime | None = None) -> AdminUser:
-    """Forget the TOTP secret and recovery codes; the admin enrolls again at the next login."""
+    """Forget the TOTP secret and recovery codes; the admin enrols again (forced while BALANCE_TOTP_REQUIRED)."""
     now = _now(now)
     admin.totp_secret = None
     admin.totp_enabled = False
@@ -236,11 +214,13 @@ def hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _new_session(db: Session, admin: AdminUser, *, verified: bool, now: datetime) -> tuple[AdminSession, str]:
+def _new_session(db: Session, admin: AdminUser, *, now: datetime,
+                 stepup_until: datetime | None = None) -> tuple[AdminSession, str]:
+    """A full admin session (`ADMIN_SESSION_HOURS`); `stepup_until` is NULL unless given."""
     raw = secrets.token_urlsafe(32)
-    ttl = timedelta(hours=get_settings().admin_session_hours) if verified else PENDING_SESSION_TTL
     session = AdminSession(admin_id=admin.id, token_hash=hash_token(raw), created_at=now, last_seen_at=now,
-                           expires_at=now + ttl, totp_verified=verified, csrf_secret=secrets.token_urlsafe(24))
+                           expires_at=now + timedelta(hours=get_settings().admin_session_hours),
+                           stepup_until=stepup_until, csrf_secret=secrets.token_urlsafe(24))
     db.add(session)
     db.flush()
     return session, raw
@@ -261,11 +241,18 @@ def revoke_admin_sessions(db: Session, admin_id: uuid.UUID, *, except_session_id
     return db.execute(q.values(revoked_at=_now(now)).execution_options(synchronize_session=False)).rowcount
 
 
-def resolve_session(db: Session, raw_token: str | None, now: datetime | None = None) -> tuple[AdminSession, AdminUser] | None:
-    """(session, admin) for a live token (not revoked, not expired, admin active), else None.
+def _account_ok(admin: AdminUser) -> bool:
+    """Can this admin sign in at all: active, and for a group admin the linked user is active and verified."""
+    if not admin.active:
+        return False
+    if admin.user_id is None:
+        return True
+    user = admin.user
+    return user is not None and user.status == "active" and user.verified_at is not None
 
-    The caller decides what a *pending* session (`is_complete` false) may do.
-    """
+
+def resolve_session(db: Session, raw_token: str | None, now: datetime | None = None) -> tuple[AdminSession, AdminUser] | None:
+    """(session, admin) for a live token (not revoked, not expired, admin and linked user usable), else None."""
     if not raw_token or len(raw_token) > MAX_RAW_TOKEN_LENGTH:
         return None
     now = _now(now)
@@ -276,16 +263,19 @@ def resolve_session(db: Session, raw_token: str | None, now: datetime | None = N
     if row is None:
         return None
     session, admin = row
-    if session.revoked_at is not None or ensure_utc(session.expires_at) <= now or not admin.active:
+    if session.revoked_at is not None or ensure_utc(session.expires_at) <= now or not _account_ok(admin):
         return None
     return session, admin
 
 
-def is_complete(session: AdminSession, admin: AdminUser) -> bool:
-    """A fully authenticated session: second factor done, and enrolled if TOTP is required."""
-    if not session.totp_verified:
-        return False
-    return admin.totp_enabled or not get_settings().admin_totp_required
+def has_open_stepup(session: AdminSession, now: datetime | None = None) -> bool:
+    """True while the session's step-up window (`stepup_until`) is still open."""
+    return session.stepup_until is not None and ensure_utc(session.stepup_until) > _now(now)
+
+
+def enrolment_required(admin: AdminUser) -> bool:
+    """TOTP enrolment is compulsory: `BALANCE_TOTP_REQUIRED` is on and the admin has not enrolled yet."""
+    return bool(get_settings().balance_totp_required) and not admin.totp_enabled
 
 
 def needs_touch(session: AdminSession, now: datetime | None = None) -> bool:
@@ -302,7 +292,7 @@ def list_sessions(db: Session, admin_id: uuid.UUID, now: datetime | None = None)
     now = _now(now)
     return list(db.scalars(
         select(AdminSession).where(AdminSession.admin_id == admin_id, AdminSession.revoked_at.is_(None),
-                                   AdminSession.expires_at > now, AdminSession.totp_verified.is_(True))
+                                   AdminSession.expires_at > now)
         .order_by(AdminSession.created_at.desc())))
 
 
@@ -349,7 +339,7 @@ def begin_enrollment(db: Session, admin: AdminUser) -> str:
 
 
 def _totp_matches(db: Session, admin: AdminUser, code: str, now: datetime) -> bool:
-    """Valid 6-digit TOTP code (±1 step) that was not accepted before (no replay)."""
+    """Valid 6-digit TOTP code (+-1 step) that was not accepted before (no replay, 120 s)."""
     code = _normalize_code(code)
     if not admin.totp_secret or not re.fullmatch(r"[0-9]{6}", code):
         return False
@@ -363,6 +353,7 @@ def _totp_matches(db: Session, admin: AdminUser, code: str, now: datetime) -> bo
 
 
 def _consume_recovery_code(admin: AdminUser, code: str) -> bool:
+    """Remove a matching single-use recovery code (used by the step-up confirmation, task 4.2)."""
     wanted = _recovery_hash(code)
     stored = list(admin.recovery_codes or [])
     for h in stored:
@@ -379,8 +370,34 @@ class LoginOutcome:
     admin: AdminUser | None = None
     session: AdminSession | None = None
     raw_token: str | None = None
-    stage: str | None = None  # "done" | "totp" | "enroll" (next step)
-    recovery_codes: list[str] | None = None  # shown once after enrollment
+    recovery_codes: list[str] | None = None  # shown once after enrolment
+
+
+def _credential_hash(admin: AdminUser) -> str | None:
+    """The stored password hash that logs this admin in: the linked user's for a group admin."""
+    if admin.user_id is not None:
+        return admin.user.password_hash if admin.user is not None else None
+    return admin.password_hash
+
+
+def _login_target(db: Session, identifier: str) -> tuple[AdminUser | None, str | None]:
+    """(admin, password hash to check) for a login identifier.
+
+    A CLI admin username wins; otherwise the identifier is the account username of a user linked to
+    an admin row. The hash is None when the account cannot sign in (unknown, disabled, group admin
+    whose user is inactive/unverified, no usable hash): the caller then burns a decoy hash check.
+    """
+    normalized = normalize_username(identifier)
+    if not normalized:
+        return None, None
+    admin = db.scalar(select(AdminUser).where(AdminUser.username_normalized == normalized,
+                                              AdminUser.user_id.is_(None)))
+    if admin is None:
+        admin = db.scalar(select(AdminUser).join(User, User.id == AdminUser.user_id)
+                          .where(User.username_normalized == normalized))
+    if admin is None or not _account_ok(admin):
+        return admin, None
+    return admin, _credential_hash(admin)
 
 
 def _limit_key(username: str, ip: str) -> str:
@@ -430,99 +447,55 @@ def _limited(db: Session, *, username: str, ip: str, step: str, admin: AdminUser
     return True
 
 
-def _complete_login(db: Session, admin: AdminUser, *, ip: str, now: datetime, old_session_id: uuid.UUID | None,
-                    method: str) -> tuple[AdminSession, str]:
-    """Issue the full session (new token), drop the pending one, stamp and audit the login."""
-    session, raw = _new_session(db, admin, verified=True, now=now)
-    if old_session_id is not None:
-        revoke_session(db, old_session_id, now)
-    admin.last_login_at = now
-    db.flush()
-    audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.login.success", target_type="admin",
-              target_id=admin.id, metadata={"method": method}, ip=ip, now=now)
-    return session, raw
-
-
 def start_login(*, username: str, password: str, ip: str, old_raw_token: str | None = None,
                 now: datetime | None = None) -> LoginOutcome:
-    """Password step. `old_raw_token` (a previous admin cookie) is revoked: sessions rotate on login.
+    """Password login. `old_raw_token` (a previous admin cookie) is revoked: sessions rotate on login.
 
-    Unlike the other services this opens and commits its own short transactions: the Argon2
-    check (64 MiB, several iterations) must never run while the SQLite write lock is held, or
-    unauthenticated requests could stall every writer. Steps: (1) write txn: limit check and
-    up-front count of this attempt as a failure (keeps the budget strict for parallel guesses);
-    (2) no transaction: password / decoy hash check; (3) write txn: audit, or release the
-    counted failure and issue the session.
+    A correct password yields a full session with `stepup_until = NULL`; there is no second factor
+    at login. Unlike the other services this opens and commits its own short transactions: the
+    Argon2 check must never run while the SQLite write lock is held, or unauthenticated requests
+    could stall every writer. Steps: (1) write txn: limit check and up-front count of this attempt
+    as a failure (keeps the budget strict for parallel guesses); (2) no transaction: password /
+    decoy hash check; (3) write txn: audit, or release the counted failure and issue the session.
     """
     now = _now(now)
     with write_session() as db:
-        admin = get_by_username(db, username) if username else None
+        admin, password_hash = _login_target(db, username)
         if _limited(db, username=username, ip=ip, step="password", admin=admin, now=now):
             return LoginOutcome("limited")
         hit_ids = [ratelimit.record_hit(db, bucket, key, now) for bucket, key, _l, _w in _limit_checks(username, ip)]
         admin_id = admin.id if admin else None
-        password_hash = admin.password_hash if admin is not None and admin.active else None
     if password_hash is not None:
         ok = verify_password(password_hash, password)
     else:
-        _verify_against_dummy(password)
+        passwords.verify_dummy(password)
         ok = False
     with write_session() as db:
         admin = db.get(AdminUser, admin_id) if admin_id else None
         # The account may have been disabled or its password changed while we were hashing.
-        if not ok or admin is None or not admin.active or admin.password_hash != password_hash:
+        if not ok or admin is None or not _account_ok(admin) or _credential_hash(admin) != password_hash:
             outcome = _fail(db, username=username, ip=ip, step="password", admin=admin, now=now, record_hits=False)
             db.expunge_all()
             return outcome
         ratelimit.release_hits(db, hit_ids)
         old = resolve_session(db, old_raw_token, now) if old_raw_token else None
-        old_id = old[0].id if old else None
-        if admin.totp_enabled:
-            stage = "totp"
-        elif get_settings().admin_totp_required:
-            stage = "enroll"
-        else:
-            stage = "done"
-        if stage == "done":
-            session, raw = _complete_login(db, admin, ip=ip, now=now, old_session_id=old_id, method="password")
-        else:
-            session, raw = _new_session(db, admin, verified=False, now=now)
-            if old_id is not None:
-                revoke_session(db, old_id, now)
-            audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.login.password_ok",
-                      target_type="admin", target_id=admin.id, metadata={"next": stage}, ip=ip, now=now)
+        if old is not None:
+            revoke_session(db, old[0].id, now)
+        session, raw = _new_session(db, admin, now=now)
+        admin.last_login_at = now
+        db.flush()
+        audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.login.success", target_type="admin",
+                  target_id=admin.id, metadata={"method": "password", "group_admin": is_group_admin(admin)},
+                  ip=ip, now=now)
         db.expunge_all()
-    return LoginOutcome("ok", admin, session, raw, stage)
-
-
-def verify_second_factor(db: Session, *, session: AdminSession, admin: AdminUser, code: str, ip: str,
-                         now: datetime | None = None) -> LoginOutcome:
-    """TOTP or recovery code for a pending session; success swaps it for a full session."""
-    now = _now(now)
-    admin = _attached(db, admin)
-    if _limited(db, username=admin.username, ip=ip, step="totp", admin=admin, now=now):
-        return LoginOutcome("limited")
-    method = None
-    if admin.totp_enabled:
-        if _totp_matches(db, admin, code, now):
-            method = "totp"
-        elif _consume_recovery_code(admin, code):
-            method = "recovery_code"
-            db.flush()
-            audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.recovery_code_used",
-                      target_type="admin", target_id=admin.id,
-                      metadata={"remaining": len(admin.recovery_codes)}, ip=ip, now=now)
-    if method is None:
-        return _fail(db, username=admin.username, ip=ip, step="totp", admin=admin, now=now)
-    new_session, raw = _complete_login(db, admin, ip=ip, now=now, old_session_id=session.id, method=method)
-    return LoginOutcome("ok", admin, new_session, raw, "done")
+    return LoginOutcome("ok", admin, session, raw)
 
 
 def complete_enrollment(db: Session, *, session: AdminSession, admin: AdminUser, code: str, ip: str,
                         now: datetime | None = None) -> LoginOutcome:
     """Verify the first TOTP code, enable TOTP and issue the recovery codes (shown once).
 
-    A pending session is swapped for a full one; an already complete session is kept.
+    The session stays; its `stepup_until` opens for `STEPUP_WINDOW_SECONDS` (enrolling proves possession).
     """
     now = _now(now)
     admin = _attached(db, admin)
@@ -535,13 +508,14 @@ def complete_enrollment(db: Session, *, session: AdminSession, admin: AdminUser,
     codes = new_recovery_codes()
     admin.totp_enabled = True
     admin.recovery_codes = [_recovery_hash(c) for c in codes]
+    attached = db.get(AdminSession, session.id)
+    if attached is None:
+        raise NotFound("session not found")
+    attached.stepup_until = now + timedelta(seconds=get_settings().stepup_window_seconds)
     db.flush()
     audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.totp_enrolled", target_type="admin",
               target_id=admin.id, ip=ip, now=now)
-    if session.totp_verified:
-        return LoginOutcome("ok", admin, session, None, "done", codes)
-    new_session, raw = _complete_login(db, admin, ip=ip, now=now, old_session_id=session.id, method="totp_enrollment")
-    return LoginOutcome("ok", admin, new_session, raw, "done", codes)
+    return LoginOutcome("ok", admin, attached, None, codes)
 
 
 def logout(db: Session, session: AdminSession, admin: AdminUser, *, ip: str | None = None,
@@ -552,17 +526,31 @@ def logout(db: Session, session: AdminSession, admin: AdminUser, *, ip: str | No
 
 
 # ----- password change / session revocation by the admin themselves -----------------------------
+def check_new_password(admin: AdminUser, new_password: str) -> None:
+    """Policy for a new own password: CLI admins 12..128 characters, group admins the account policy."""
+    if is_group_admin(admin) and admin.user is not None:
+        passwords.validate_policy(new_password, admin.user.username or "", admin.user.email)
+    else:
+        validate_password(new_password)
+
+
 def change_password(db: Session, *, session: AdminSession, admin: AdminUser, current_password: str,
                     new_password: str, ip: str, now: datetime | None = None) -> bool:
-    """Change the own password; revokes all *other* sessions. False if the current password is wrong
-    (counted as a login failure). Raises `InvalidInput` for a weak new password, `RateLimited` never
-    (the caller checks `change_password_limited` first)."""
+    """Change the own password; revokes all *other* admin sessions. False if the current password is
+    wrong (counted as a login failure). Raises `InvalidInput` for a weak new password, `RateLimited` never
+    (the caller checks `change_password_limited` first). For a group admin this is the account password."""
     now = _now(now)
     admin = _attached(db, admin)
-    if not verify_password(admin.password_hash, current_password):
+    current_hash = _credential_hash(admin)
+    if current_hash is None or not verify_password(current_hash, current_password):
         _fail(db, username=admin.username, ip=ip, step="password_change", admin=admin, now=now)
         return False
-    admin.password_hash = hash_password(new_password)
+    check_new_password(admin, new_password)
+    new_hash = passwords.hash_password(new_password)
+    if is_group_admin(admin):
+        admin.user.password_hash = new_hash
+    else:
+        admin.password_hash = new_hash
     revoked = revoke_admin_sessions(db, admin.id, except_session_id=session.id, now=now)
     db.flush()
     audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.password_changed", target_type="admin",

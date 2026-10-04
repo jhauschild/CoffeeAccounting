@@ -23,7 +23,7 @@ def test_development_defaults():
     assert s.smtp_security == "starttls" and s.secrets_dir == "/secrets" and s.mail_max_per_hour == 30
     assert s.verification_ttl_hours == 24 and s.guest_approval_ttl_days == 7 and s.reset_ttl_minutes == 60
     assert s.password_min_length == 10 and s.stepup_window_seconds == 300
-    assert s.balance_totp_required is False and s.admin_totp_required is True
+    assert s.balance_totp_required is False and not hasattr(s, "admin_totp_required")
     assert s.allowed_email_domain_list == ["tum.de", "mytum.de", "*.tum.de"]
 
 

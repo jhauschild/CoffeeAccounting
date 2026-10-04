@@ -78,7 +78,6 @@ class Settings(BaseSettings):
 
     session_lifetime_days: int = 180
     admin_session_hours: int = 12
-    admin_totp_required: bool = True
 
     local_timezone: str = "Europe/Berlin"
     app_title: str = "Coffee Ledger"

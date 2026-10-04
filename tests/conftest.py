@@ -47,7 +47,6 @@ TEST_ENV = {
     "LOCAL_TIMEZONE": "Europe/Berlin",
     "UNDO_WINDOW_SECONDS": "300",
     "MAX_COFFEES_PER_SESSION_PER_HOUR": "30",
-    "ADMIN_TOTP_REQUIRED": "true",
     "CURRENCY": "EUR",
     "CSV_DELIMITER": ";",
     "CSV_DECIMAL_SEPARATOR": ",",

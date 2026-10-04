@@ -47,7 +47,7 @@ Health endpoints: `GET /healthz` (process is up) and `GET /readyz` (database rea
 - **Normal users have no passwords, no email, no notes.** A profile is a display name plus a chair. A browser becomes "that person" through a random 256-bit session cookie (`coffee_session`, HttpOnly, Secure, SameSite=Lax, 180 days by default). Only the SHA-256 hash of the token is stored.
 - **Department access code.** Because the app is reachable from the internet, nobody can create or select a profile (or even list profiles) without the shared `ACCESS_CODE`. It is entered once per browser on `/join`; a correct code unlocks `/register` and `/profiles` for one hour. A browser that already has a valid session never needs it. The QR codes never contain the code; print it on a sign next to them or hand it out some other way. Wrong attempts are rate-limited (10 per 15 minutes per IP).
 - **Rotating the access code:** edit `ACCESS_CODE` in `.env`, then `docker compose up -d --force-recreate`. Existing user sessions keep working; only new registrations and profile selections need the new code. Rotate it when somebody who should not have it learns it.
-- **Administrators** are created only from the command line. They log in with username + password (Argon2id, at least 12 characters) and a TOTP second factor (required while `ADMIN_TOTP_REQUIRED=true`, the production default), with 8 single-use recovery codes. Admin sessions use a separate cookie (`coffee_admin`, `Path=/admin`, 12 hours by default). Login failures (password and TOTP) are rate-limited in the database. There are two roles: `global` (everything) and `chair` (only users currently in their assigned chairs; no merging, no chair changes, no price or chair management).
+- **Administrators.** The head admin (role `global`) is created from the command line and logs in with username + password (Argon2id, at least 12 characters); there is no TOTP prompt at later logins. A group admin (role `chair`, a promoted member) logs in at the same page with the account username and account password and sees only their own chair. Admin sessions use a separate cookie (`coffee_admin`, `Path=/admin`, 12 hours by default). While `BALANCE_TOTP_REQUIRED` is true (the production default) an admin without TOTP can only reach the one-time enrolment (QR code, then 8 single-use recovery codes). Login failures are rate-limited in the database.
 - Every administrative action is written to the append-only audit log.
 
 > Normal-user identity is based on a long-lived browser session and voluntary profile selection. It does not cryptographically prove the user's real-world identity. This is intentional for a low-stakes, trust-based departmental coffee ledger.
@@ -172,7 +172,6 @@ Set in `.env` (see `.env.example`, which documents each one). Defaults are the a
 | `TRUSTED_PROXY_IPS` | empty | IPs/CIDRs whose `X-Forwarded-*` are trusted |
 | `SESSION_LIFETIME_DAYS` | `180` | user browser session lifetime |
 | `ADMIN_SESSION_HOURS` | `12` | admin session lifetime |
-| `ADMIN_TOTP_REQUIRED` | `true` | require TOTP for admins |
 | `ADMIN_BOOTSTRAP_USERNAME`, `ADMIN_BOOTSTRAP_PASSWORD` | empty | creates the first global admin at start, ignored once any admin exists |
 | `LOCAL_TIMEZONE` | `Europe/Berlin` | display and day/week/month boundaries (weeks start Monday) |
 | `APP_TITLE` | `Coffee Ledger` | page title |
@@ -196,7 +195,7 @@ Set in `.env` (see `.env.example`, which documents each one). Defaults are the a
 | `RESET_TTL_MINUTES` | `60` | validity of a password reset link |
 | `PASSWORD_MIN_LENGTH` | `10` | minimum password length (maximum is 128) |
 | `STEPUP_WINDOW_SECONDS` | `300` | validity of an admin step-up confirmation |
-| `BALANCE_TOTP_REQUIRED` | `false` (dev), `true` (production) | require TOTP to set a balance |
+| `BALANCE_TOTP_REQUIRED` | `false` (dev), `true` (production) | require TOTP: admins must enrol once, and balance changes need a step-up |
 | `ARGON2_TIME_COST`, `ARGON2_MEMORY_COST_KIB`, `ARGON2_PARALLELISM` | `3`, `65536`, `4` | Argon2id cost; keep the defaults in production (tests lower them) |
 | `LOG_LEVEL` | `INFO` | stdout logging level |
 | `BACKUP_HOST_DIR` | `./backups` | Compose only: host directory mounted at `/backups` |
@@ -213,19 +212,18 @@ docker compose run --rm app alembic upgrade head
 
 ## First administrator and TOTP
 
-Admin accounts exist only through the command line (or the one-time bootstrap). Prompts ask for the password twice (at least 12 characters):
+Admin accounts exist only through the command line (or the one-time bootstrap). Prompts ask for the password twice (at least 12 characters). A username that a user account already holds is refused:
 
 ```bash
 docker compose run --rm app python -m app.cli create-admin --username alice --role global
-# chair administrators: --role chair --chair SHORT [--chair SHORT ...]  (short names of existing chairs)
 docker compose run --rm app python -m app.cli list-admins
 ```
 
 Alternative for the very first start: set `ADMIN_BOOTSTRAP_USERNAME` and `ADMIN_BOOTSTRAP_PASSWORD` (>= 12 characters) in `.env`. The app creates that global admin at startup while no administrator exists (also available as `python -m app.cli bootstrap-admin`) and ignores the variables afterwards; remove both lines from `.env` once it worked.
 
-**TOTP enrollment happens at the first login** at `https://<host>/admin/login`: after the password the page shows a QR code/secret for an authenticator app, you enter a code, and 8 single-use recovery codes are shown once (store them safely). **Enroll immediately after creating the account**: whoever knows the password first can enroll the second factor.
+**TOTP enrolment happens once, at the first login** at `https://<host>/admin/login` while `BALANCE_TOTP_REQUIRED` is true: after the password every admin page redirects to the enrolment page with a QR code/secret for an authenticator app; you enter a code, and 8 single-use recovery codes are shown once (store them safely). Later logins need the password only. **Enrol immediately after creating the account**: whoever knows the password first can enrol the second factor.
 
-Management commands: `set-admin-chairs --username U --chair SHORT ...`, `reset-admin-password --username U` (revokes the admin's sessions), `reset-admin-totp --username U` (the admin enrolls again at the next login; use for a lost phone with no recovery codes), `disable-admin --username U [--enable]`. All are audited. Passwords are never taken from the command line; `--password-stdin` is available for scripting.
+Management commands: `reset-admin-password --username U` (CLI admins only; revokes the admin's sessions), `reset-admin-totp --username U` (the admin enrols again; use for a lost phone with no recovery codes), `disable-admin --username U [--enable]`. All are audited. Passwords are never taken from the command line; `--password-stdin` is available for scripting.
 
 ## First price
 
@@ -317,7 +315,7 @@ Read the release notes and `.env.example` for new variables first. If something 
 
 - HTTPS only in production (startup refuses otherwise), HSTS, Secure/HttpOnly/SameSite cookies, strict CSP (`default-src 'self'`, no inline scripts or styles, `frame-ancestors 'none'`), `X-Content-Type-Options`, `Referrer-Policy: same-origin`, request size limit (64 KiB, also at the proxy), no stack traces and no API docs in production, redirects only to fixed internal paths.
 - CSRF protection on every state-changing form, signed one-time scan tokens, `Sec-Fetch-Site`/`Origin` checks; scanning never changes state on GET.
-- Rate limits, stored in the database (so restarts do not reset them): access code, registration, profile search, admin login (password and TOTP).
+- Rate limits, stored in the database (so restarts do not reset them): access code, registration, profile search, admin login.
 - No external services, CDNs, fonts, trackers or analytics.
 - Secrets live only in `.env` (mode 600, not in the image or the repository); the access code, tokens, passwords and TOTP secrets are never logged.
 - Keep the host patched, the proxy as the only public listener, `/admin` restricted by IP where possible, and backups readable only by the operator (they contain every name and balance).

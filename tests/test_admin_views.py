@@ -94,10 +94,10 @@ def test_users_csv_route_honors_filters_and_is_audited(gc, cc, db, chair, other_
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
     assert 'attachment; filename="coffee-users-' in r.headers["content-disposition"]
     names = [row[0] for row in rows_of(r)[1:]]
-    assert names == ["'=cmd|' /C calc'!A0", "Plain"]  # filtered by chair, formula neutralized
+    assert names == ["'=cmd|' /C calc'!A0", "Plain", "Test Member"]  # filtered by chair (Test Member = the group admin's own account), formula neutralized
     r = gc[0].get("/admin/users/export.csv?q=elsew")
     assert [row[0] for row in rows_of(r)[1:]] == ["Elsewhere"]
-    assert [row[0] for row in rows_of(cc[0].get("/admin/users/export.csv"))[1:]] == ["'=cmd|' /C calc'!A0", "Plain"]
+    assert [row[0] for row in rows_of(cc[0].get("/admin/users/export.csv"))[1:]] == ["'=cmd|' /C calc'!A0", "Plain", "Test Member"]
     assert cc[0].get(f"/admin/users/export.csv?chair={other_chair.id}", follow_redirects=False).status_code == 403
     with read_session() as r2:
         entries = list(r2.scalars(select(AuditLog).where(AuditLog.action == "export.users_csv")))

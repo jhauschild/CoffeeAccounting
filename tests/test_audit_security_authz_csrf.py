@@ -115,25 +115,28 @@ def test_admin_posts_require_session_bound_csrf(path, token, app, db, world, pri
     assert snapshot(db_path) == before
 
 
-@pytest.mark.parametrize("state", ["disabled", "pending_totp", "expired", "revoked"])
-def test_dead_or_incomplete_admin_sessions_reach_nothing(state, app, db, world, db_path):
-    admin_id, _ = make_real_admin(username="victim")
+@pytest.mark.parametrize("state", ["disabled", "group_user_inactive", "group_user_unverified", "expired", "revoked"])
+def test_dead_or_incomplete_admin_sessions_reach_nothing(state, app, db, world, db_path, chair):
+    group = state.startswith("group_user")
+    admin_id, _ = make_real_admin(username="victim", role="chair" if group else "global",
+                                  chairs=[chair] if group else ())
     c = new_client(app)
     csrf = login_as(c, admin_id)
     with write_session() as w:
         s = w.scalars(select(AdminSession).where(AdminSession.admin_id == admin_id)).one()
         if state == "disabled":  # flag flipped without revoking the sessions
             w.get(AdminUser, admin_id).active = False
-        elif state == "pending_totp":
-            s.totp_verified = False
+        elif state == "group_user_inactive":  # the linked account is deactivated: the session dies with it
+            w.get(AdminUser, admin_id).user.status = "inactive"
+        elif state == "group_user_unverified":
+            w.get(AdminUser, admin_id).user.verified_at = None
         elif state == "expired":
             s.expires_at = utcnow()
         else:
             s.revoked_at = utcnow()
     before = snapshot(db_path)
-    allowed_for_pending = {"/admin/totp", "/admin/totp/setup", "/admin/logout"}
     for method, path, _ in ROUTES:
-        if path == "/admin/login" or (state == "pending_totp" and path in allowed_for_pending):
+        if path == "/admin/login":
             continue
         r = call(c, method, path, world, csrf)
         assert r.status_code == 303 and r.headers["location"] == "/admin/login", (state, method, path)

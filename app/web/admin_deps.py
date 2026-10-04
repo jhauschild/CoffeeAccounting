@@ -2,9 +2,10 @@
 
 Authorization is enforced server-side by dependencies, never by hidden UI:
 
-* `live_admin_session`  any live admin session (also a pending, second-factor-less one)
-* `pending_admin`       a live session that is *not* complete (needs TOTP or enrollment)
-* `require_admin`       a complete session (password + TOTP when required); yields `AdminContext`
+* `live_admin_session`  any live admin session (logout and the TOTP enrolment pages use this)
+* `require_admin`       a live session whose admin has finished the one-time TOTP enrolment when
+                        `BALANCE_TOTP_REQUIRED` demands it (otherwise redirect to the enrolment);
+                        yields `AdminContext`
 * `require_global_admin` complete session of a global administrator
 * `admin_user_access`   `require_admin` + the `{user_id}` path parameter must be in scope
 * `require_admin_csrf`  every state-changing admin form must carry the session-bound token
@@ -39,6 +40,7 @@ log = logging.getLogger(__name__)
 
 LOGIN_CSRF_COOKIE = "coffee_admin_login"
 LOGIN_PATH = "/admin/login"
+ENROL_PATH = "/admin/totp/setup"
 _UNSET = object()
 
 # Jinja helpers for the admin templates (the environment is shared with the other templates).
@@ -93,17 +95,10 @@ def live_admin_session(request: Request) -> tuple[AdminSession, AdminUser]:
     return pair
 
 
-def pending_admin(request: Request) -> tuple[AdminSession, AdminUser]:
-    session, admin = live_admin_session(request)
-    if admin_auth.is_complete(session, admin):
-        raise Redirect("/admin")
-    return session, admin
-
-
 def require_admin(request: Request) -> AdminContext:
     session, admin = live_admin_session(request)
-    if not admin_auth.is_complete(session, admin):
-        raise Redirect(LOGIN_PATH)
+    if admin_auth.enrolment_required(admin):
+        raise Redirect(ENROL_PATH)
     return AdminContext(session, admin)
 
 
@@ -132,7 +127,7 @@ def global_user_access(user_id: str, ctx: AdminContext = Depends(require_global_
 
 
 async def require_admin_csrf(request: Request) -> None:
-    """CSRF check for admin POSTs, bound to the admin session (pending sessions included)."""
+    """CSRF check for admin POSTs, bound to the admin session."""
     pair = await run_in_threadpool(live_admin_session, request)
     await verify_csrf_form(request, "admin", pair[0].csrf_secret)
 

@@ -16,10 +16,10 @@ from tests.admin_support import (  # noqa: F401
 
 REQUIRED = {
     # logins, logout, TOTP
-    "admin.login.failed", "admin.login.password_ok", "admin.login.success", "admin.logout", "admin.totp_enrolled",
+    "admin.login.failed", "admin.login.success", "admin.logout", "admin.totp_enrolled",
     "admin.totp_reset", "admin.password_changed", "admin.sessions_revoked",
     # CLI admin management
-    "admin.created", "admin.password_reset", "admin.chairs_set", "admin.disabled",
+    "admin.created", "admin.password_reset", "admin.disabled",
     # chairs, prices, users
     "chair.created", "chair.renamed", "chair.deactivated", "chair.reactivated", "price.added", "user.chair_changed",
     "user.updated", "user.merged", "user.deactivated", "user.reactivated", "user.sessions_revoked",
@@ -46,8 +46,6 @@ def test_every_admin_action_is_audited_without_secrets(app, db, chair, other_cha
         secret = s.scalars(sel(AdminUser).where(AdminUser.username == "newbie")).one().totp_secret
     done = c.post("/admin/totp/setup", data={"code": current_code(secret), "csrf_token": CSRF_RE.search(page.text).group(1)})
     codes = [x for x in done.text.split("<code>")[1:]]
-    c.cookies.set("coffee_admin", next(x for x in done.headers.get_list("set-cookie") if x.startswith("coffee_admin="))
-                  .split(";")[0].split("=", 1)[1], path="/admin")
     csrf = page_csrf(c, "/admin/account")
     c.post("/admin/account/password", data={"current_password": PASSWORD, "new_password": NEW_PASSWORD,
                                             "new_password2": NEW_PASSWORD, "csrf_token": csrf})
@@ -91,9 +89,8 @@ def test_every_admin_action_is_audited_without_secrets(app, db, chair, other_cha
 
     # --- CLI management (system actor)
     import io
-    assert cli.main(["set-admin-chairs", "--username", "x", "--chair", "BN2"]) == 1  # unknown admin: nothing audited
-    make_real_admin(role="chair", chairs=[chair], username="cadm")
-    assert cli.main(["set-admin-chairs", "--username", "cadm", "--chair", "BN2"]) == 0
+    assert cli.main(["disable-admin", "--username", "x"]) == 1  # unknown admin: nothing audited
+    make_real_admin(username="cadm")
     monkeypatch.setattr("sys.stdin", io.StringIO(NEW_PASSWORD + "\n"))
     assert cli.main(["reset-admin-password", "--username", "cadm", "--password-stdin"]) == 0
     assert cli.main(["reset-admin-totp", "--username", "newbie"]) == 0
@@ -105,7 +102,7 @@ def test_every_admin_action_is_audited_without_secrets(app, db, chair, other_cha
     actions = {e.action for e in entries}
     assert REQUIRED <= actions, sorted(REQUIRED - actions)
     for e in entries:
-        if e.action.startswith(("admin.created", "admin.chairs_set", "admin.password_reset", "admin.totp_reset", "admin.disabled")):
+        if e.action.startswith(("admin.created", "admin.password_reset", "admin.totp_reset", "admin.disabled")):
             assert e.actor_type in ("system", "admin")
     web = [e for e in entries if e.action in ("payment.recorded", "export.users_csv", "price.added", "user.merged")]
     assert all(e.actor_type == "admin" and e.actor_id and e.source_ip for e in web)

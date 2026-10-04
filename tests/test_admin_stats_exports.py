@@ -131,7 +131,8 @@ def test_user_table_activity_sort_puts_unknown_last(db, global_admin, chair):
 
 def test_chair_admin_sees_only_own_chair(db, world, chair_admin, other_chair):
     with read_session() as r:
-        assert {x.display_name for x in stats.list_users(r, chair_admin).rows} == {"Alice Müller", "Cleo"}
+        # the group admin is a member of the chair, so their own account is listed as well
+        assert {x.display_name for x in stats.list_users(r, chair_admin).rows} == {"Alice Müller", "Cleo", "Test Member"}
         with pytest.raises(Forbidden):
             stats.list_users(r, chair_admin, chair_id=other_chair.id)
 

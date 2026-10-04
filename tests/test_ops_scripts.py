@@ -161,7 +161,7 @@ def test_readme_cli_examples_match_the_real_parser():
         args = parser.parse_args(argv)  # raises SystemExit on an unknown command or flag
         seen.add(args.command)
     assert {"create-admin", "set-price", "check-ledger", "purge-expired", "qr", "list-admins"} <= seen
-    for name in ("reset-admin-password", "reset-admin-totp", "disable-admin", "set-admin-chairs", "bootstrap-admin"):
+    for name in ("reset-admin-password", "reset-admin-totp", "disable-admin", "bootstrap-admin"):
         assert name in readme
 
 

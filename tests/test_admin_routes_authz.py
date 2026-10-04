@@ -38,8 +38,8 @@ def policy_of(method, path, calls):
         policy = "user"
     elif ad.require_admin in calls:
         policy = "admin"
-    elif ad.pending_admin in calls or ad.live_admin_session in calls:
-        policy = "session"
+    elif ad.live_admin_session in calls:
+        policy = "session"  # logout and the one-time TOTP enrolment: reachable before enrolment
     else:
         policy = None
     return policy
@@ -50,7 +50,6 @@ IDS = [f"{m} {p}" for m, p, _ in ROUTES]
 
 POST_DATA = {
     "/admin/logout": {},
-    "/admin/totp": {"code": "000000"},
     "/admin/totp/setup": {"code": "000000"},
     "/admin/account/password": {"current_password": "x" * 12, "new_password": "y" * 14, "new_password2": "y" * 14},
     "/admin/account/sessions/revoke": {},
@@ -151,7 +150,7 @@ def test_anonymous_and_normal_users_are_rejected(method, path, calls, app, world
 def test_scope_and_role_enforced(method, path, calls, world, principals):
     policy = policy_of(method, path, calls)
     if policy in ("public", "session"):
-        return  # login/second-factor/logout routes are covered by the login tests
+        return  # login, enrolment and logout routes are covered by the login tests and the enrolment-gate test below
     allowed = {"admin": {"global", "in_scope", "out_of_scope"}, "user": {"global", "in_scope"},
                "global": {"global"}, "global-user": {"global"}}[policy]
     for name in ("out_of_scope", "in_scope", "global"):  # the mutating principals last
@@ -175,3 +174,52 @@ def test_global_admin_sees_all_chairs_chair_admin_only_theirs(world, principals,
     assert cb.get(f"/admin/users/{world['other_user_id']}").status_code == 200
     assert ca.get(f"/admin/users/{world['other_user_id']}", follow_redirects=False).status_code == 403
     assert ca.get("/admin/users/not-a-uuid", follow_redirects=False).status_code == 404
+
+
+ENROLMENT_ROUTES = {("GET", "/admin/totp/setup"), ("POST", "/admin/totp/setup"), ("POST", "/admin/logout")}
+
+
+def test_session_policy_routes_are_exactly_logout_and_the_enrolment_pages():
+    session_routes = {(m, p) for m, p, calls in ROUTES if policy_of(m, p, calls) == "session"}
+    assert session_routes == ENROLMENT_ROUTES
+
+
+@pytest.fixture
+def unenrolled(app, chair, monkeypatch):
+    """name -> (client, csrf) for admins without TOTP while BALANCE_TOTP_REQUIRED is true."""
+    from tests.conftest import reload_settings
+    monkeypatch.setenv("BALANCE_TOTP_REQUIRED", "true")
+    reload_settings()
+    out = {}
+    for name, role, chairs in (("head", "global", ()), ("group", "chair", [chair])):
+        admin_id, _ = make_real_admin(role=role, chairs=chairs, username=name, totp=False)
+        c = new_client(app)
+        out[name] = (c, login_as(c, admin_id))
+    return out
+
+
+@pytest.mark.parametrize("method,path,calls", ROUTES, ids=IDS)
+def test_unenrolled_admins_are_confined_to_the_enrolment_pages(method, path, calls, world, unenrolled):
+    """With BALANCE_TOTP_REQUIRED every /admin route except login, logout and the enrolment pages
+    redirects an admin without TOTP to the one-time enrolment (head admin and group admin alike)."""
+    policy = policy_of(method, path, calls)
+    if policy == "public" or (method, path) == ("POST", "/admin/logout"):
+        return
+    for name, (client, csrf) in unenrolled.items():
+        r = call(client, method, path, world, csrf=csrf)
+        if policy == "session":  # the enrolment page itself
+            if method == "GET":
+                assert r.status_code == 200, name
+            else:
+                assert r.status_code == 401, name  # wrong code: the page is shown again
+        else:
+            assert r.status_code == 303 and r.headers["location"] == "/admin/totp/setup", (name, r.status_code)
+
+
+def test_enrolled_admins_are_not_redirected(world, principals, monkeypatch):
+    from tests.conftest import reload_settings
+    monkeypatch.setenv("BALANCE_TOTP_REQUIRED", "true")
+    reload_settings()
+    for name in ("global", "in_scope"):
+        client, _ = principals[name]
+        assert client.get("/admin", follow_redirects=False).status_code == 200  # make_real_admin enrols TOTP
