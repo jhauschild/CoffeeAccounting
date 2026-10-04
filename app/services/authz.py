@@ -1,13 +1,15 @@
 """Scope checks for admin actors (PROMPT §6 "Authorization").
 
-Global admins may access everything. Chair admins may access only users whose *current*
-chair is one of their assigned chairs. Inactive admins may access nothing.
+Global (head) admins may access everything. Chair (group) admins may access only users whose
+*current* chair is the chair of the member account linked to them (v2: no `admin_chairs`).
+Inactive admins may access nothing.
 """
 
 from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AdminUser, User
@@ -36,8 +38,12 @@ def visible_chair_ids(db: Session, admin: AdminUser) -> set[uuid.UUID] | None:
     require_active(admin)
     if admin.role == "global":
         return None
-    # v2: a group admin sees exactly the chair of their own user account (admin_chairs is gone).
-    return {chair.id for chair in admin.chairs}
+    # v2: a group admin sees exactly the chair of the linked user account, read from the database
+    # (not from a cached relationship) so a chair change takes effect immediately.
+    if admin.user_id is None:
+        return set()
+    chair_id = db.scalar(select(User.chair_id).where(User.id == admin.user_id))
+    return {chair_id} if chair_id is not None else set()
 
 
 def ensure_admin_can_access_chair(db: Session, admin: AdminUser, chair_id: uuid.UUID) -> None:
