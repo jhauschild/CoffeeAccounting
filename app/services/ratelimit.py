@@ -6,9 +6,9 @@ insert are atomic (`BEGIN IMMEDIATE` serializes writers).
 
 * `check_rate(db, bucket, key, limit, window_seconds)` — count this attempt; raise
   `RateLimited` if `limit` attempts already happened in the window (the rejected attempt
-  is not recorded). Use for "N requests per window" (registration, profile search).
-* `is_limited(...)` + `record_hit(...)` — for "N *failures* per window" (access code,
-  admin login): check before verifying, record only failures.
+  is not recorded). Use for "N requests per window" (registration, password reset requests).
+* `is_limited(...)` + `record_hit(...)` — for "N *failures* per window" (admin
+  login): check before verifying, record only failures.
 """
 
 from __future__ import annotations
@@ -28,9 +28,12 @@ MAX_BUCKET_LENGTH = 32
 MAX_KEY_LENGTH = 200
 
 # Limits used by the web layer (PROMPT §5, §6).
-ACCESS_CODE_FAILURES = ("access_code", 10, 15 * 60)   # per IP
 REGISTRATION = ("register", 10, 60 * 60)               # per IP
-PROFILE_SEARCH = ("profile_search", 60, 5 * 60)        # per IP
+LOGIN_FAILURES = ("login", 5, 15 * 60)                 # per username+IP
+LOGIN_FAILURES_IP = ("login_ip", 20, 15 * 60)          # per IP, across usernames
+RESET_USER = ("reset_user", 3, 60 * 60)                # reset requests per username
+RESET_IP = ("reset_ip", 10, 60 * 60)                   # reset requests per IP
+RESET_RECIPIENT = ("reset_rcpt", 6, 60 * 60)           # reset mails per recipient address (hashed)
 ADMIN_LOGIN_FAILURES = ("admin_login", 5, 15 * 60)     # per username+IP
 ADMIN_LOGIN_FAILURES_IP = ("admin_login_ip", 15, 15 * 60)  # per IP, across usernames
 

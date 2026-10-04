@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.verify.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+{% include "user/_pending.html" %}
+<section class="card">
+  <h1>{{ t("user.verify.title") }}</h1>
+  <p>{{ t("user.verify.intro") }}</p>
+  <dl class="totals">
+    <dt>{{ t("user.verify.username") }}</dt><dd>{{ view.username }}</dd>
+    <dt>{{ t("user.verify.name") }}</dt><dd>{{ view.display_name }}</dd>
+    <dt>{{ t("user.verify.chair") }}</dt><dd>{{ view.chair_short_name }}</dd>
+  </dl>
+  <form method="post" action="/verify/{{ token|urlencode }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button-block">{{ t("user.verify.submit") }}</button>
+  </form>
+</section>
+{% endblock %}

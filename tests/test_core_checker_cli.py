@@ -8,7 +8,8 @@ import pytest
 from sqlalchemy import func, select
 
 from app import cli
-from app.models import AuditLog, PendingAction, Price, RateLimitEvent, UserSession
+from app.models import (AuditLog, PasswordResetToken, PendingAction, PendingRegistration, Price, RateLimitEvent,
+                        UserSession)
 from app.services import ledger, users
 from app.services.checker import check_ledger
 from app.timeutil import utcnow
@@ -142,6 +143,33 @@ def test_cli_purge_expired(db, user, capsys):
     assert db.get(UserSession, expired_id) is None and db.get(UserSession, live_id) is not None
     assert [p.id for p in db.scalars(select(PendingAction))] == ["new"]
     assert db.scalar(select(func.count()).select_from(RateLimitEvent)) == 1
+
+
+def test_cli_purge_expired_removes_expired_and_used_registration_and_reset_links(db, chair, capsys):
+    now = utcnow()
+    member = factories.make_member(db, "Pat", chair)
+
+    def registration(name, expires, consumed=None):
+        return PendingRegistration(
+            kind="member", username=name, username_normalized=name, display_name=name, chair_id=chair.id,
+            email=f"{name}@tum.de", password_hash="!", token_hash=name.ljust(64, "0"), created_at=now,
+            expires_at=expires, consumed_at=consumed)
+
+    def reset(token_hash, expires, consumed=None):
+        return PasswordResetToken(user_id=member.id, token_hash=token_hash.ljust(64, "0"), created_at=now,
+                                  expires_at=expires, consumed_at=consumed)
+
+    soon, past = now + timedelta(hours=1), now - timedelta(minutes=1)
+    db.add_all([registration("open", soon), registration("expired", past), registration("used", soon, now),
+                reset("open", soon), reset("expired", past), reset("used", soon, now)])
+    db.commit()
+    assert cli.main(["purge-expired"]) == 0
+    out = capsys.readouterr().out
+    assert "pending_registrations=2" in out and "reset_links=2" in out
+    db.expire_all()
+    assert [r.username for r in db.scalars(select(PendingRegistration))] == ["open"]
+    assert [r.token_hash[:4] for r in db.scalars(select(PasswordResetToken))] == ["open"]
+    assert db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action == "maintenance.purge_expired")) == 1
 
 
 def test_cli_registers_admin_commands(monkeypatch):

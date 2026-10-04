@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% from "user/_fields.html" import field %}
+{% block title %}{{ t("user.reset.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>{{ t("user.reset.title") }}</h1>
+  <p>{{ t("user.reset.for", username=view.username) }}</p>
+  <form method="post" action="/reset/{{ token|urlencode }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {{ field("password", t("user.reset.password"), "", error, type="password", autocomplete="new-password", hint=t("user.register.password_hint", min=min_password_length), maxlength=1000, error_args={"min": min_password_length}) }}
+    {{ field("password2", t("user.register.password2"), "", type="password", autocomplete="new-password", maxlength=1000) }}
+    <button type="submit" class="button-block">{{ t("user.reset.submit") }}</button>
+  </form>
+</section>
+{% endblock %}

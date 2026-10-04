@@ -48,7 +48,7 @@
 </section>
 <section class="card">
   <p class="muted">{{ t("user.account.leave_hint") }}</p>
-  <form method="post" action="/account/leave">
+  <form method="post" action="/logout">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="button-secondary button-block">{{ t("user.account.leave") }}</button>
   </form>

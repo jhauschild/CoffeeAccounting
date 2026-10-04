@@ -40,4 +40,10 @@ def render(request: Request, name: str, context: dict | None = None, *, status_c
     if context is None or "csrf_token" not in context:
         ctx["csrf_token"] = csrf_token_for(request)
     ctx.update(context or {})
-    return templates.TemplateResponse(request, name, ctx, status_code=status_code, headers=headers)
+    response = templates.TemplateResponse(request, name, ctx, status_code=status_code, headers=headers)
+    new_cookie = getattr(request.state, "new_csrf_cookie", None)
+    if new_cookie:  # `deps.form_csrf_token` issued a pre-session binding for this page
+        from app.web.deps import set_csrf_cookie
+
+        set_csrf_cookie(response, new_cookie)
+    return response

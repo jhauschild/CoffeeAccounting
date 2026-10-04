@@ -1,4 +1,4 @@
-"""Small HMAC-SHA256 signer for short, self-contained tokens (scan tokens, gate cookie,
+"""Small HMAC-SHA256 signer for short, self-contained tokens (scan tokens,
 registration tokens, CSRF tokens).
 
 Format: ``base64url(json payload) "." base64url(hmac)``. Every token has a *purpose*; the

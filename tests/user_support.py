@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 
 from app.models import ConsumptionEvent, PaymentEvent, PendingAction, RateLimitEvent, User, UserSession
 
-ACCESS_CODE = "test-access-code"
+PASSWORD = "correct horse battery"
 _FIELD = r'name="{name}" value="([^"]*)"'
 
 
@@ -34,25 +34,21 @@ def scan(client, kind: str = "single"):
     return post_scan(client, kind)
 
 
-def pass_gate(client) -> None:
-    r = client.post("/join", data={"code": ACCESS_CODE}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/join"
+def make_account(db, name: str = "Alice Example", chair=None, username: str | None = None, password: str = PASSWORD):
+    """A verified member with a real (cheap) Argon2 hash, so the sign-in form works."""
+    from app.services.passwords import hash_password
+    from tests import factories
+
+    return factories.make_member(db, name, chair, username=username, password_hash=hash_password(password))
 
 
-def register(client, name: str = "New Person", chair=None, *, token: str | None = None, extra: dict | None = None):
-    """Submit the registration form like a browser would (fetches the form first)."""
-    page = client.get("/register")
+def sign_in(client, user_or_name, password: str = PASSWORD):
+    """Submit the sign-in form like a browser would (fetches the form, and with it the CSRF cookie, first)."""
+    username = user_or_name if isinstance(user_or_name, str) else user_or_name.username
+    page = client.get("/login")
     assert page.status_code == 200
-    data = {"csrf_token": field(page.text, "csrf_token"), "registration_token": token or field(page.text, "registration_token"),
-            "display_name": name, "chair_id": str(chair.id), "privacy_ack": "1"}
-    data.update(extra or {})
-    return client.post("/register", data=data, follow_redirects=False)
-
-
-def select_profile(client, user, *, csrf: str | None = None):
-    if csrf is None:
-        csrf = field(client.get("/profiles").text, "csrf_token")
-    return client.post("/profiles/select", data={"csrf_token": csrf, "user_id": str(user.id)}, follow_redirects=False)
+    data = {"csrf_token": field(page.text, "csrf_token"), "username": username, "password": password}
+    return client.post("/login", data=data, follow_redirects=False)
 
 
 def count(db, model) -> int:

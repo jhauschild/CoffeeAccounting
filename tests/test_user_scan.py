@@ -116,7 +116,7 @@ def test_deactivated_user_cannot_record(client, db, user, price, login, global_a
     users.set_user_status(db, admin=global_admin, user_id=user.id, active=False)
     db.commit()
     r = post_scan(client, "single", token)
-    assert r.status_code == 303 and r.headers["location"] == "/join"  # session no longer valid
+    assert r.status_code == 303 and r.headers["location"] == "/login"  # session no longer valid
     assert events(db) == []
 
 
@@ -140,7 +140,7 @@ def test_merged_profile_cannot_scan(client, db, user, chair, price, login, globa
     users.merge_users(db, admin=global_admin, duplicate_id=user.id, target_id=target.id)
     db.commit()
     r = scan(client)
-    assert r.status_code == 303 and r.headers["location"] == "/join"
+    assert r.status_code == 303 and r.headers["location"] == "/login"
     assert events(db) == []
 
 
@@ -155,7 +155,7 @@ def test_per_session_hourly_cap(client, db, user, price, login, monkeypatch):
 
 def test_scan_without_session_stores_a_pending_action_only(client, db, price):
     r = scan(client, "double")
-    assert r.status_code == 303 and r.headers["location"] == "/join"
+    assert r.status_code == 303 and r.headers["location"] == "/login"
     pending_cookie = next(c for c in r.headers.get_list("set-cookie") if c.startswith("coffee_pending="))
     assert "HttpOnly" in pending_cookie and "SameSite=lax" in pending_cookie and "Path=/" in pending_cookie
     db.rollback()
@@ -179,7 +179,7 @@ def test_done_page_requires_owner(client, db, user, chair, price, login):
     assert client.get(done).status_code == 404
     client.cookies.clear()
     r = client.get(done, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/join"
+    assert r.status_code == 303 and r.headers["location"] == "/login"
     login(user)
     assert client.get("/coffee/done/not-a-uuid").status_code == 404
 

@@ -1,0 +1,8 @@
+{% macro field(id, label, value="", error=None, type="text", autocomplete="off", hint=None, maxlength=200, required=true, error_args=None) -%}
+<div class="field">
+  <label for="{{ id }}">{{ label }}</label>
+  <input id="{{ id }}" name="{{ id }}" type="{{ type }}"{% if required %} required{% endif %} maxlength="{{ maxlength }}" value="{{ value }}" autocomplete="{{ autocomplete }}"{% if type != "password" %} autocapitalize="none" autocorrect="off" spellcheck="false"{% endif %}{% if error %} aria-invalid="true"{% endif %}>
+  {% if hint %}<p class="muted">{{ hint }}</p>{% endif %}
+  {% if error %}<p class="field-error" role="alert">{{ t(error, **(error_args or {})) }}</p>{% endif %}
+</div>
+{%- endmacro %}
