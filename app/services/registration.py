@@ -17,6 +17,9 @@ Rules
 -----
 * Services never commit and never send mail. A raised error rolls the caller's transaction back, including
   the rate-limit hits recorded in it; so only attempts that got through validation count towards the limits.
+  One exception: a "username taken" answer (`Conflict`, reason `username_taken`) records a hit in the
+  `username_probe` bucket (10 per 15 minutes per client address) that the CALLER must commit by catching that
+  Conflict inside its `write_session()` block (see `routes_user.register_submit`); other errors leak nothing.
 * Nothing but a SHA-256 of the token and an Argon2id hash of the password is stored; the raw token is
   returned once (to be mailed) and never logged or audited.
 * Usernames: stored lower-case (strip + casefold), 3 to 32 characters of ``a-z 0-9 . _ -``. Display names carry
@@ -49,9 +52,10 @@ from app.config import get_settings
 from app.models import EMAIL_MAX, USERNAME_MAX, AdminUser, Chair, PendingRegistration, User
 from app.services import audit, passwords, ratelimit, signing, users
 from app.services.authz import require_global
-from app.services.errors import Conflict, Forbidden, InvalidInput, InvalidToken
+from app.services.errors import Conflict, Forbidden, InvalidInput, InvalidToken, RateLimited
 from app.services.mail import MailMessage, build_message, normalize_address
-from app.services.mail_templates import already_registered, guest_sponsor_request, member_verification
+from app.services.mail_templates import (already_registered, guest_sponsor_request, member_verification,
+                                         neutralise_urls)
 from app.services.onboarding import OnboardResult, start_session_and_record
 from app.timeutil import ensure_utc, utcnow
 
@@ -125,12 +129,32 @@ def validate_username(raw: str, db: Session | None = None) -> str:
     return normalized
 
 
+def _check_username_probe(db: Session, raw: str, ip: str, now: datetime) -> str:
+    """`validate_username` plus a per-IP cap on "taken" answers (`ratelimit.USERNAME_PROBE`).
+
+    Usernames are sign-in identifiers (CLI admin names included) and appear nowhere on the site, so the
+    "taken" answer of a registration form must not be an unthrottled oracle. Over the cap raises `RateLimited`;
+    a "taken" answer records one hit and re-raises the `Conflict`. The hit only survives if the CALLER
+    commits despite the exception (catch the Conflict with reason `REASON_USERNAME_TAKEN` INSIDE the
+    `write_session()` block, like the login failure counter); other validation errors record nothing."""
+    bucket, limit, window = ratelimit.USERNAME_PROBE
+    key = ratelimit.ip_key(ip)
+    if ratelimit.is_limited(db, bucket, key, limit, window, now):
+        raise RateLimited("too many username checks", bucket=bucket)
+    try:
+        return validate_username(raw, db)
+    except Conflict:
+        ratelimit.record_hit(db, bucket, key, now)
+        raise
+
+
 def clean_display_name(raw: str) -> str:
     """Strip control, format, private-use and surrogate characters (whitespace controls become spaces),
     collapse whitespace, then apply the profile rules (non-empty, at most 60 characters)."""
     text = unicodedata.normalize("NFC", raw if isinstance(raw, str) else "")
     text = "".join(" " if c in "\t\n\r\x0b\x0c\x85  " else c for c in text)
     text = "".join(c for c in text if unicodedata.category(c) not in ("Cc", "Cf", "Co", "Cs"))
+    text = neutralise_urls(text)  # a display name is shown in mails (guest requests): no links
     try:
         return users.clean_display_name(text)
     except InvalidInput as exc:
@@ -193,8 +217,10 @@ def begin_member(db: Session, *, username: str, display_name: str, chair_id: uui
     """
     now = ensure_utc(now) if now is not None else utcnow()
     ip_bucket, ip_limit, ip_window = ratelimit.REGISTRATION
-    ratelimit.check_rate(db, ip_bucket, ratelimit.ip_key(ip), ip_limit, ip_window, now=now)
-    normalized = validate_username(username, db)
+    if ratelimit.is_limited(db, ip_bucket, ratelimit.ip_key(ip), ip_limit, ip_window, now):
+        raise RateLimited("too many requests", bucket=ip_bucket)
+    normalized = _check_username_probe(db, username, ip, now)  # a "taken" answer counts as a probe, not as a registration
+    ratelimit.record_hit(db, ip_bucket, ratelimit.ip_key(ip), now)
     name = clean_display_name(display_name)
     _active_chair(db, chair_id)
     address = validate_email(email)
@@ -352,8 +378,10 @@ def begin_guest(db: Session, *, username: str, display_name: str, password: str,
     """
     now = ensure_utc(now) if now is not None else utcnow()
     bucket, limit, window = GUEST_REQUEST_IP
-    ratelimit.check_rate(db, bucket, ratelimit.ip_key(ip), limit, window, now=now)
-    normalized = validate_username(username, db)
+    if ratelimit.is_limited(db, bucket, ratelimit.ip_key(ip), limit, window, now):
+        raise RateLimited("too many requests", bucket=bucket)
+    normalized = _check_username_probe(db, username, ip, now)  # a "taken" answer counts as a probe, not as a request
+    ratelimit.record_hit(db, bucket, ratelimit.ip_key(ip), now)
     name = clean_display_name(display_name)
     address = validate_email(sponsor_email)
     passwords.validate_policy(password, normalized)

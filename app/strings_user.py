@@ -172,6 +172,7 @@ STRINGS: dict[str, str] = {
     "user.edit.title": "Edit profile",
     "user.edit.save": "Save",
     "user.edit.cancel": "Cancel",
+    "user.edit.chair_locked": "As a group admin you cannot change your {chair_label}. Ask a head administrator.",
     "user.edit.chair_note": "Changes of the {chair_label} are logged.",
     # Privacy
     "user.privacy.title": "Privacy",

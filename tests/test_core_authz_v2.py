@@ -28,8 +28,11 @@ def test_visible_chair_ids_is_exactly_the_linked_users_chair(db, ga, chair, othe
 
 def test_scope_follows_a_chair_change_of_the_linked_user(db, ga, chair, other_chair, global_admin):
     assert authz.visible_chair_ids(db, ga) == {chair.id}
-    users.update_profile(db, actor_type="admin", actor_id=global_admin.id, user_id=ga.user_id,
-                         chair_id=other_chair.id)
+    with pytest.raises(Forbidden):  # F4/M3: update_profile refuses it while the role is active
+        users.update_profile(db, actor_type="admin", actor_id=global_admin.id, user_id=ga.user_id,
+                             chair_id=other_chair.id)
+    db.query(type(ga.user)).filter_by(id=ga.user_id).update({"chair_id": other_chair.id})  # e.g. legacy data
+    db.expire_all()
     assert authz.visible_chair_ids(db, ga) == {other_chair.id}
     outsider = f.make_user(db, "Was Inside", chair)
     with pytest.raises(Forbidden):

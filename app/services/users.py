@@ -157,6 +157,11 @@ def create_account(db: Session, *, kind: str, username: str, username_normalized
     return user
 
 
+def _is_active_group_admin(db: Session, user_id: uuid.UUID) -> bool:
+    return db.scalar(select(AdminUser.id).where(AdminUser.user_id == user_id, AdminUser.role == "chair",
+                                                AdminUser.active.is_(True))) is not None
+
+
 def update_profile(
     db: Session,
     *,
@@ -169,10 +174,16 @@ def update_profile(
 ) -> User:
     """Edit name and/or chair. `actor_type` is "user" (the profile owner, already
     authenticated by the caller) or "admin" (`actor_id` = admin id; scope-checked, and
-    only global admins may change a chair). Every chair change is audited."""
+    only global admins may change a chair). Every chair change is audited.
+
+    A user linked to an ACTIVE group admin row (role "chair") cannot change chair, whoever asks
+    (`Forbidden`): the scope of a group admin derives from the chair of the linked account. A
+    head admin may move the user after removing the role."""
     user = get_user(db, user_id)
     if user.status == "merged":
         raise Conflict("profile has been merged")
+    if chair_id is not None and chair_id != user.chair_id and _is_active_group_admin(db, user.id):
+        raise Forbidden("a group admin cannot change chair; remove the role first")
     if actor_type == ACTOR_ADMIN:
         admin = db.get(AdminUser, actor_id) if actor_id is not None else None
         if admin is None:

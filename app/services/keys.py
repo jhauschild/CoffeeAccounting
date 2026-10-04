@@ -4,8 +4,10 @@ Each purpose uses its own label, so a leak of one derived key says nothing about
 passed as HKDF `info`; there is no salt (SECRET_KEY is already high-entropy random). Derivation is
 deterministic: the same SECRET_KEY and label always give the same key.
 
-Not migrated yet: v1 HMAC/CSRF token signing (`app/services/signing.py`, `app/web`) keeps its own
-derivation; moving it onto `derive_key` with distinct labels is a later task.
+Token signing, CSRF tokens and keyed MACs (`app/services/signing.py`) derive their keys here with the label
+``signing:<purpose>:<extra>``; other purposes use their own labels (`mail-credentials`, `mail-recipient-rate`,
+`stepup-payload`). Changing a derivation invalidates what was signed with the old key (cookies, tokens,
+stored recovery-code MACs); nothing was deployed when signing was migrated.
 """
 
 from __future__ import annotations

@@ -23,6 +23,7 @@ from app.config import Settings, get_settings
 from app.services.errors import ServiceError
 from app.strings import has, t
 from app.web import health, routes_admin, routes_user
+from app.web.accesslog import AccessLogMiddleware, redact_path
 from app.web.deps import CSRFError, Redirect
 from app.web.middleware import SecurityMiddleware
 from app.web.templating import ROOT, render
@@ -86,7 +87,7 @@ def _install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unexpected(request: Request, exc: Exception) -> Response:
-        log.error("unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+        log.error("unhandled error on %s %s", request.method, redact_path(request.url.path), exc_info=exc)
         return error_page(request, 500, "error.internal")
 
 
@@ -110,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None if production else "/openapi.json",
     )
     app.add_middleware(SecurityMiddleware, public_base_url=settings.public_base_url, production=production)
+    app.add_middleware(AccessLogMiddleware)  # outermost: sees the final status; never logs token paths
     app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
     app.include_router(health.router)
     app.include_router(routes_user.router)

@@ -44,8 +44,10 @@ STRINGS: dict[str, str] = {
     "mail.sponsor.subject": "{app_title}: a guest asks you to vouch for them",
     "mail.sponsor.body": (
         "Hello,\n\n"
-        "{guest_name} (username: {guest_username}) asked to use {app_title} as a guest and named you as the "
-        "person who vouches for them.\n\n"
+        "Someone asked to use {app_title} as a guest and named you as the person who vouches for them.\n\n"
+        "Name given by the guest (free text, not checked):\n"
+        "\"{guest_name}\"\n"
+        "Username: {guest_username}\n\n"
         "Vouching means: you confirm that this person uses the coffee machine of your institute. If you do "
         "not know them, reject the request.\n\n"
         "You do not need to sign in. Open the link below to see the request and to approve or reject it. "

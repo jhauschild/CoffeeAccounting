@@ -19,7 +19,7 @@ from app.config import get_settings
 from app.db import read_session, write_session
 from app.models import COFFEE_KINDS, DISPLAY_NAME_MAX, Chair, ConsumptionEvent
 from app.services import ledger, login, onboarding, pending, prices, recovery, registration, sessions, users
-from app.services.errors import (AlreadyReversed, Conflict, InvalidCredentials, InvalidInput, InvalidPassword,
+from app.services.errors import (AlreadyReversed, Conflict, Forbidden, InvalidCredentials, InvalidInput, InvalidPassword,
                                  InvalidToken, NoPriceConfigured, NotFound, RateLimited, UserInactive)
 from app.services.mail import send_in_background
 from app.web import deps, tokens, user_views
@@ -247,16 +247,24 @@ def register_submit(request: Request, background_tasks: BackgroundTasks,
     if password != password2:
         return _register_page(request, values=values, errors={"password2": "user.register.error_password_mismatch"},
                               status=400)
+    taken: Conflict | None = None
     try:
         with write_session() as db:
-            result = registration.begin_member(
-                db, username=username, display_name=display_name, chair_id=deps.parse_uuid(chair_id), email=email,
-                password=password, privacy_ack=bool(privacy_ack), ip=deps.client_ip(request))
-            message = registration.mail_for_registration(result)
+            try:
+                result = registration.begin_member(
+                    db, username=username, display_name=display_name, chair_id=deps.parse_uuid(chair_id),
+                    email=email, password=password, privacy_ack=bool(privacy_ack), ip=deps.client_ip(request))
+                message = registration.mail_for_registration(result)
+            except Conflict as exc:
+                if exc.context.get("reason") != registration.REASON_USERNAME_TAKEN:
+                    raise
+                taken = exc  # leave the block normally: the username-probe hit is committed
     except RateLimited:
         return _rate_limited(request)
     except (InvalidInput, Conflict) as exc:
         return _register_page(request, values=values, errors=_register_errors(exc), status=400)
+    if taken is not None:
+        return _register_page(request, values=values, errors=_register_errors(taken), status=400)
     background_tasks.add_task(send_in_background, message, result.email)
     # The same page whether or not the address already has an account.
     return render(request, "user/register_sent.html", {})
@@ -402,9 +410,13 @@ def edit_submit(request: Request, display_name: str = Form(""), chair_id: str = 
         name, cid, errors = _check_profile_form(display_name, chair_id, allowed)
         if errors:
             return _edit_page(request, db, ctx, values, errors, status=400)
-    with write_session() as db:
-        users.update_profile(db, user_id=ctx.user.id, display_name=name, chair_id=cid, actor_type="user",
-                             ip=deps.client_ip(request))
+    try:
+        with write_session() as db:
+            users.update_profile(db, user_id=ctx.user.id, display_name=name, chair_id=cid, actor_type="user",
+                                 ip=deps.client_ip(request))
+    except Forbidden:
+        with read_session() as db:
+            return _edit_page(request, db, ctx, values, {"chair": "user.edit.chair_locked"}, status=403)
     return _redirect("/account?notice=saved")
 
 
