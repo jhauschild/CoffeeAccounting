@@ -17,6 +17,14 @@ NOTICES = {"saved": "user.account.notice_saved", "registered": "user.account.not
            "expired": "user.account.notice_expired", "no_price": "user.account.notice_no_price"}
 
 
+LOGIN_NOTICES = {"reset": "user.login.notice_reset"}
+
+
+def login_notice_key(value: str | None) -> str | None:
+    """Whitelisted notice shown on /login (the query value only selects a fixed string)."""
+    return LOGIN_NOTICES.get(value or "")
+
+
 def notice_key(value: str | None) -> str | None:
     """Whitelisted notice shown on /account (the query value only selects a fixed string)."""
     return NOTICES.get(value or "")

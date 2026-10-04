@@ -16,7 +16,7 @@ from app.services.errors import AlreadyReversed, Conflict, UndoNotAllowed
 from app.timeutil import utcnow
 from tests import factories
 from tests.admin_support import fast_hasher, login_as, make_real_admin  # noqa: F401
-from tests.user_support import event_id_from, events, field, pass_gate, post_scan, select_profile
+from tests.user_support import event_id_from, events, field, make_account, post_scan, sign_in
 
 
 def run_threads(fns):
@@ -132,11 +132,11 @@ def test_admin_can_reverse_merged_duplicates_event_from_target_page(app, db, cha
 
 
 # ----- user undo after the session changed ----------------------------------------------------
-def test_undo_after_session_rotation_is_refused(client, db, user, price, login):
-    login(user)
+def test_undo_after_session_rotation_is_refused(client, db, chair, price):
+    account = make_account(db, "Rotating", chair)
+    sign_in(client, account)
     eid = event_id_from(post_scan(client, "single"))
-    pass_gate(client)
-    select_profile(client, user)  # same person re-selects: new session, old one revoked
+    sign_in(client, account)  # same person signs in again: new session, old one revoked
     page = client.get(f"/coffee/done/{eid}")
     assert page.status_code == 200 and 'action="/coffee/undo/' not in page.text  # undo no longer offered
     csrf_new = field(client.get("/account/edit").text, "csrf_token")  # valid CSRF of the new session

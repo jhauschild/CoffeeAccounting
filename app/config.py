@@ -3,9 +3,7 @@
 All variables from PROMPT §11 are supported. In production (`ENVIRONMENT=production`)
 startup refuses insecure configuration (PROMPT §9): a non-https `PUBLIC_BASE_URL`,
 a missing/short/placeholder `SECRET_KEY`, a mail backend other than `smtp`, bad SMTP settings or a
-missing `MAIL_FROM`. `ACCESS_CODE` (the v1 gate code, removed in task 2.5) is optional: in production an
-unset/short/placeholder code is replaced by a random one so the v1 gate cannot be opened with a
-published value. Development mode refuses the published `DEV_SECRET_KEY` unless `PUBLIC_BASE_URL` is a
+missing `MAIL_FROM`. Development mode refuses the published `DEV_SECRET_KEY` unless `PUBLIC_BASE_URL` is a
 local http:// address. Error messages never echo configuration values.
 
 `get_settings()` is cached; tests that change the environment call
@@ -17,7 +15,6 @@ from __future__ import annotations
 import ipaddress
 from urllib.parse import urlsplit
 from functools import lru_cache
-import secrets
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -26,15 +23,12 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_SECRET_KEY = "dev-insecure-secret-key-not-for-production-use"
-DEV_ACCESS_CODE = "dev-access-code"
 
 MIN_SECRET_KEY_LENGTH = 32
-MIN_ACCESS_CODE_LENGTH = 8
 
 # Exact values (case-insensitive) that must never be used in production.
 _PLACEHOLDER_VALUES = {
     DEV_SECRET_KEY,
-    DEV_ACCESS_CODE,
     "secret",
     "password",
     "changeme",
@@ -74,7 +68,6 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./data/coffee.db"
     secret_key: str = DEV_SECRET_KEY
-    access_code: str = DEV_ACCESS_CODE
 
     session_lifetime_days: int = 180
     admin_session_hours: int = 12
@@ -210,10 +203,6 @@ class Settings(BaseSettings):
                 errors.append(
                     f"SECRET_KEY must be set to a random value of at least {MIN_SECRET_KEY_LENGTH} characters in production"
                 )
-            # ACCESS_CODE is optional (v1 gate, removed in task 2.5). A weak or unset code must not
-            # open the gate with a published value, so replace it by an unguessable one.
-            if len(self.access_code) < MIN_ACCESS_CODE_LENGTH or is_placeholder(self.access_code):
-                self.access_code = secrets.token_urlsafe(32)
         if errors:
             raise ValueError("Invalid configuration: " + "; ".join(errors))
         return self

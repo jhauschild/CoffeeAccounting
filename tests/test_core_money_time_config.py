@@ -97,7 +97,6 @@ GOOD_PROD = dict(
     environment="production",
     public_base_url="https://coffee.example.org/",
     secret_key="Zq3v8K1mR7tXw2pL9sD4fG6hJ0kN5bVc",
-    access_code="Bean-Water-42",
     mail_from="Coffee Ledger <coffee@example.org>",
 )
 
@@ -125,7 +124,7 @@ def test_production_settings_refuse_insecure_values(override):
 
 def test_development_allows_http_and_dev_defaults():
     s = Settings(_env_file=None, environment="development", public_base_url="http://localhost:8000",
-                 secret_key="dev-insecure-secret-key-not-for-production-use", access_code="dev-access-code")
+                 secret_key="dev-insecure-secret-key-not-for-production-use")
     assert not s.cookie_secure
 
 

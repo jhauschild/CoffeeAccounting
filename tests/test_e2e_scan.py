@@ -1,5 +1,5 @@
-"""End-to-end browser test (Playwright, headless Chromium): scan -> auto-submit -> access code ->
-registration -> success -> refresh -> second scan without any prompt (PROMPT §12).
+"""End-to-end browser test (Playwright, headless Chromium): scan -> auto-submit -> login ->
+success -> refresh -> second scan without any prompt (PROMPT §12).
 
 Skipped with an explicit reason if Playwright or the browser cannot be started."""
 
@@ -18,7 +18,8 @@ from app import db as app_db
 from app.main import create_app
 from app.models import ConsumptionEvent, PendingAction, User
 from tests import factories
-from tests.conftest import TEST_ENV, reload_settings
+from tests.conftest import reload_settings
+from tests.user_support import PASSWORD, make_account
 
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/pw-browsers")
 
@@ -73,24 +74,21 @@ def browser():
         b.close()
 
 
-def test_scan_register_refresh_scan_again(live_server, browser, db, engine):
+def test_scan_login_refresh_scan_again(live_server, browser, db, engine):
     chair = factories.make_chair(db, short_name="E2E", full_name="End to End Chair")
     factories.set_price(db, 50)
+    account = make_account(db, "Erika E2E", chair)
     page = browser.new_context().new_page()
 
-    # 1. First scan: no session -> auto-submit -> /join asks for the access code.
+    # 1. First scan: no session -> auto-submit -> pending coffee kept, /login shown.
     page.goto(f"{live_server}/coffee/double")
-    page.wait_for_url("**/join")
+    page.wait_for_url("**/login")
     assert "will be recorded" in page.content()
+    assert page.locator("a[href='/register']").count() == 1
 
-    # 2. Access code -> choice page -> registration form.
-    page.fill("#code", TEST_ENV["ACCESS_CODE"])
-    page.click("button[type=submit]")
-    page.wait_for_selector("a[href='/register']")
-    page.click("a[href='/register']")
-    page.fill("#display_name", "Erika E2E")
-    page.select_option("#chair_id", str(chair.id))
-    page.check("#privacy_ack")
+    # 2. Sign in with username and password.
+    page.fill("#username", account.username)
+    page.fill("#password", PASSWORD)
     page.click("button[type=submit]")
 
     # 3. Success page for the pending double.

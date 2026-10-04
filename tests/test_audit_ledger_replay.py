@@ -16,7 +16,7 @@ from app.services.sessions import SESSION_COOKIE
 from app.timeutil import utcnow
 from app.web import tokens
 from tests import factories
-from tests.user_support import event_id_from, events, field, pass_gate, post_scan, register, scan_token, select_profile
+from tests.user_support import event_id_from, events, field, make_account, post_scan, scan_token, sign_in
 
 
 def run_threads(n, fn):
@@ -42,12 +42,12 @@ def coffees(db):
     return [e for e in events(db) if e.type in ("single", "double")]
 
 
-# ----- replay after registration / after undo -------------------------------------------------
-def test_replay_after_registration_returns_the_same_event(client, db, chair, price):
+# ----- replay after sign-in / after undo -------------------------------------------------------
+def test_replay_after_sign_in_returns_the_same_event(client, db, chair, price):
+    account = make_account(db, "Replay Person", chair)
     token = scan_token(client, "double")
-    assert post_scan(client, "double", token).headers["location"] == "/join"
-    pass_gate(client)
-    first = event_id_from(register(client, "Replay Person", chair))
+    assert post_scan(client, "double", token).headers["location"] == "/login"
+    first = event_id_from(sign_in(client, account))
     # The browser now has a session; the same scan token is posted again (Back + resubmit).
     again = post_scan(client, "double", token)
     assert event_id_from(again) == first
@@ -72,10 +72,10 @@ def test_token_used_by_session_then_replayed_anonymously_creates_nothing(client,
     login(user)
     token = scan_token(client, "single")
     eid = event_id_from(post_scan(client, "single", token))
+    somebody = make_account(db, "Somebody Else", chair)
     with TestClient(app, raise_server_exceptions=False) as anon:
-        assert post_scan(anon, "single", token).headers["location"] == "/join"
-        pass_gate(anon)
-        r = register(anon, "Somebody Else", chair)
+        assert post_scan(anon, "single", token).headers["location"] == "/login"
+        r = sign_in(anon, somebody)
         assert r.status_code == 303 and "/coffee/done/" not in r.headers["location"]
         assert eid not in r.headers["location"]
     (only,) = events(db)
@@ -83,16 +83,15 @@ def test_token_used_by_session_then_replayed_anonymously_creates_nothing(client,
 
 
 def test_consumed_pending_replayed_in_another_browser_records_nothing(client, app, db, chair, user, price):
+    first = make_account(db, "First", chair)
     token = scan_token(client, "single")
     post_scan(client, "single", token)
-    pass_gate(client)
-    event_id_from(register(client, "First", chair))
+    event_id_from(sign_in(client, first))
     with TestClient(app, raise_server_exceptions=False) as other:
-        assert post_scan(other, "single", token).headers["location"] == "/join"
-        pass_gate(other)
-        r = select_profile(other, user)
+        assert post_scan(other, "single", token).headers["location"] == "/login"
+        r = sign_in(other, make_account(db, "Second", chair))
         assert r.headers["location"] == "/account?notice=expired"
-    assert len(events(db)) == 1 and events(db)[0].user_id != user.id
+    assert len(events(db)) == 1 and events(db)[0].user_id == first.id
 
 
 # ----- concurrency ----------------------------------------------------------------------------
@@ -120,7 +119,7 @@ def test_concurrent_consumers_of_one_pending_action_record_once(db, chair, price
 
     def go(i):
         with write_session() as w:
-            res = onboarding.select_profile_and_start_session(w, user_id=profiles[i].id, pending_id=pid)
+            res = onboarding.start_session_and_record(w, w.get(User, profiles[i].id), pending_id=pid)
             return res.coffee_status
 
     results, errors = run_threads(6, go)
@@ -129,49 +128,14 @@ def test_concurrent_consumers_of_one_pending_action_record_once(db, chair, price
     assert len(events(db)) == 1
 
 
-def test_concurrent_registration_with_one_token_creates_one_profile_and_coffee(db, chair, price):
-    with write_session() as w:
-        pid = pending.create_pending(w, "single", "y" * 32)
-    nonce = "r" * 32
-
-    def go(_):
-        with write_session() as w:
-            res = onboarding.register_and_start_session(w, display_name="Twin", chair_id=chair.id, pending_id=pid,
-                                                        registration_nonce=nonce)
-            return res.created, res.event.id if res.event else None
-
-    results, errors = run_threads(6, go)
-    assert not errors
-    assert sum(created for created, _ in results) == 1
-    assert len({eid for _, eid in results}) == 1  # every submit shows the same coffee
-    db.rollback()
-    assert len(list(db.scalars(select(User)))) == 1 and len(events(db)) == 1
-
-
-def test_concurrent_registrations_sharing_a_pending_cookie_book_one_coffee(db, chair, price):
-    with write_session() as w:
-        pid = pending.create_pending(w, "double", "z" * 32)
-
-    def go(i):
-        with write_session() as w:
-            return onboarding.register_and_start_session(w, display_name=f"Tab {i}", chair_id=chair.id,
-                                                         pending_id=pid, registration_nonce=f"{i}" * 32).coffee_status
-
-    results, errors = run_threads(4, go)
-    assert not errors
-    assert results.count(onboarding.COFFEE_RECORDED) == 1
-    assert len(events(db)) == 1
-
-
-# ----- deactivation between pending creation and selection -----------------------------------
-def test_deactivated_between_pending_and_selection_keeps_pending_unconsumed(client, db, user, price, global_admin):
+# ----- deactivation between pending creation and sign-in -------------------------------------
+def test_deactivated_account_cannot_sign_in_and_pending_stays_unconsumed(client, db, chair, price, global_admin):
+    account = make_account(db, "Soon Gone", chair)
     post_scan(client, "single")
-    pass_gate(client)
-    csrf = field(client.get("/profiles").text, "csrf_token")
     with write_session() as w:
-        users.set_user_status(w, admin=w.get(type(global_admin), global_admin.id), user_id=user.id, active=False)
-    r = select_profile(client, user, csrf=csrf)
-    assert r.status_code in (403, 404, 409)
+        users.set_user_status(w, admin=w.get(type(global_admin), global_admin.id), user_id=account.id, active=False)
+    r = sign_in(client, account)
+    assert r.status_code == 401
     db.rollback()
     assert events(db) == [] and db.scalars(select(PendingAction)).one().consumed_at is None
 
@@ -180,7 +144,7 @@ def test_deactivated_between_pending_and_selection_keeps_pending_unconsumed(clie
 def test_scan_token_for_other_kind_or_purpose_rejected(client, db, user, price, login):
     login(user)
     assert post_scan(client, "double", scan_token(client, "single")).status_code == 400
-    assert post_scan(client, "single", tokens.make_registration_token()).status_code == 400
+    assert post_scan(client, "single", tokens.csrf_token("user", "x")).status_code == 400  # not a scan token
     old = tokens.make_scan_token("single", now=utcnow() - timedelta(minutes=30, seconds=2))
     assert post_scan(client, "single", old).status_code == 400
     assert events(db) == []

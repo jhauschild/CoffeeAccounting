@@ -27,12 +27,15 @@ def test_development_defaults():
     assert s.allowed_email_domain_list == ["tum.de", "mytum.de", "*.tum.de"]
 
 
-def test_production_defaults_to_smtp_and_totp_balance_without_access_code(monkeypatch):
-    monkeypatch.delenv("ACCESS_CODE", raising=False)
+def test_production_defaults_to_smtp_and_totp_balance():
     s = Settings(**PROD)
     assert s.mail_backend == "smtp" and s.balance_totp_required is True
-    # Unset ACCESS_CODE is accepted, but never leaves the published dev value in place.
-    assert s.access_code != "dev-access-code" and len(s.access_code) >= 8
+
+
+def test_the_v1_access_code_setting_is_gone(monkeypatch):
+    monkeypatch.setenv("ACCESS_CODE", "left-over-from-v1")  # an old .env line is ignored, not an error
+    s = Settings(**PROD)
+    assert not hasattr(s, "access_code")
 
 
 def test_allowed_domains_parsing():

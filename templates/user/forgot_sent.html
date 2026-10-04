@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.forgot.sent_title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card stack">
+  <h1>{{ t("user.forgot.sent_title") }}</h1>
+  <p>{{ t("user.forgot.sent_body") }}</p>
+  <a class="button button-secondary button-block" href="/login">{{ t("user.register.sent_signin") }}</a>
+</section>
+{% endblock %}

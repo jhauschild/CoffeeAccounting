@@ -1,34 +1,37 @@
-"""User-facing routes (PROMPT §3, §5, §8). Business rules live in the services; routes only
+"""User-facing routes (PROMPT §3, §5, §8; PLAN-v2 section 1). Business rules live in the services; routes only
 parse input, open the transaction, map errors to safe pages and choose the redirect.
 
-All redirects go to fixed internal paths (the only variable parts are an event UUID created by
-the server and a whitelisted notice keyword). Nothing about a pending coffee travels in a URL.
+All redirects go to fixed internal paths (the only variable parts are an event UUID created by the server
+and a whitelisted notice keyword). Nothing about a pending action travels in a URL. Forms submitted before
+sign-in (login, register, verify, forgot, reset) carry a CSRF token bound to the `coffee_csrf` cookie; GETs
+write nothing (a mail scanner prefetching a link changes no state).
 """
 
 from __future__ import annotations
 
-import uuid
+import logging
 
-from fastapi import APIRouter, Depends, Form, Request
-from fastapi.concurrency import run_in_threadpool
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import RedirectResponse, Response
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import read_session, write_session
-from app.models import COFFEE_KINDS, DISPLAY_NAME_MAX, Chair, ConsumptionEvent, User
-from app.services import gate, ledger, onboarding, pending, prices, ratelimit, sessions, users
-from app.services.errors import AlreadyReversed, InvalidInput, NoPriceConfigured, NotFound, RateLimited, UserInactive
+from app.models import COFFEE_KINDS, DISPLAY_NAME_MAX, Chair, ConsumptionEvent
+from app.services import ledger, login, onboarding, pending, prices, recovery, registration, sessions, users
+from app.services.errors import (AlreadyReversed, Conflict, InvalidCredentials, InvalidInput, InvalidPassword,
+                                 InvalidToken, NoPriceConfigured, NotFound, RateLimited, UserInactive)
+from app.services.mail import send_in_background
 from app.web import deps, tokens, user_views
 from app.web.deps import UserContext
 from app.web.middleware import no_store
 from app.web.templating import render
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
-PROFILE_LIST_LIMIT = 50
-SEARCH_MAX_LENGTH = 100
+FORM_TEXT_MAX = 200
+PASSWORD_FORM_MAX = 1000
 
 
 def _redirect(path: str) -> RedirectResponse:
@@ -45,6 +48,15 @@ def _message(request: Request, title: str, body: str, *, status: int = 200, tone
              link: tuple[str, str] | None = None) -> Response:
     return render(request, "user/message.html", {"title": title, "body": body, "tone": tone, "link": link},
                   status_code=status)
+
+
+def _rate_limited(request: Request) -> Response:
+    return _message(request, "user.limited.title", "user.limited.body", status=429, tone="error")
+
+
+def _invalid_link(request: Request) -> Response:
+    return _message(request, "user.link.invalid_title", "user.link.invalid_body", status=400,
+                    link=("/login", "user.login.title"))
 
 
 # ----- home -----------------------------------------------------------------------------------
@@ -74,7 +86,7 @@ def scan_submit(request: Request, kind: str, token: str = Form("")):
     if ctx is None:
         with write_session() as db:
             pending_id = pending.create_pending(db, kind, scan.nonce)
-        response = _redirect("/join")
+        response = _redirect("/login")
         deps.set_pending_cookie(response, pending_id)
         return response
     try:
@@ -121,57 +133,19 @@ def undo(request: Request, event_id: str, ctx: UserContext = Depends(deps.requir
     return _redirect(f"/coffee/done/{eid}")
 
 
-# ----- access gate ----------------------------------------------------------------------------
-@router.get("/join")
-def join_page(request: Request, db: Session = Depends(deps.get_read_db)):
-    return render(request, "user/join.html", {"gate_passed": deps.has_gate(request), "error": False,
-                                              "pending_notice": user_views.pending_notice(request, db)})
-
-
-@router.post("/join")
-def join_submit(request: Request, code: str = Form("")):
-    ip = ratelimit.ip_key(deps.client_ip(request))
-    bucket, limit, window = ratelimit.ACCESS_CODE_FAILURES
-    # Check and count in ONE write transaction: the guess is counted as a failure before it is
-    # evaluated, so parallel guesses cannot exceed the budget; a correct code releases it again.
-    with write_session() as db:
-        if ratelimit.is_limited(db, bucket, ip, limit, window):
-            raise RateLimited("too many access code attempts")
-        hit_id = ratelimit.record_hit(db, bucket, ip)
-    if gate.check_access_code(code):
-        with write_session() as db:
-            ratelimit.release_hits(db, [hit_id])
-        response = _redirect("/join")
-        deps.set_gate_cookie(response)
-        return response
-    with read_session() as db:
-        notice = user_views.pending_notice(request, db)
-    return render(request, "user/join.html", {"gate_passed": False, "error": True, "pending_notice": notice},
-                  status_code=403)
-
-
-# ----- onboarding -----------------------------------------------------------------------------
-def _registration_coffee_id(user: User) -> uuid.UUID | None:
-    """A repeated registration submit arrives without the (already cleared) pending cookie; the
-    coffee recorded by the first submit has exactly the profile's creation timestamp."""
-    with read_session() as db:
-        return db.scalars(select(ConsumptionEvent.id).where(
-            ConsumptionEvent.user_id == user.id, ConsumptionEvent.type.in_(COFFEE_KINDS),
-            ConsumptionEvent.created_at == user.created_at)).first()
-
-
-def _finish_onboarding(request: Request, result: onboarding.OnboardResult, *, registration: bool = False) -> Response:
-    event_id = result.event.id if result.event is not None else None
-    if event_id is None and registration and not result.created:
-        event_id = _registration_coffee_id(result.user)
-    if event_id is not None:
-        target = f"/coffee/done/{event_id}"
+# ----- sign in --------------------------------------------------------------------------------
+def _signed_in(request: Request, result: onboarding.OnboardResult, *, default: str = "/account") -> Response:
+    """Cookie, redirect target and cleanup after a sign-in (login or verification) in this browser."""
+    if result.event is not None:
+        target = f"/coffee/done/{result.event.id}"
+    elif result.coffee_status == onboarding.COFFEE_VIEW_SITE:
+        target = "/overview"
     elif result.coffee_status == onboarding.COFFEE_EXPIRED:
         target = "/account?notice=expired"
     elif result.coffee_status == onboarding.COFFEE_NO_PRICE:
         target = "/account?notice=no_price"
     else:
-        target = "/account?notice=registered"
+        target = default
     response = _redirect(target)
     deps.set_session_cookie(response, result.raw_token)
     deps.clear_pending_cookie(response)
@@ -179,29 +153,204 @@ def _finish_onboarding(request: Request, result: onboarding.OnboardResult, *, re
     return response
 
 
-async def _csrf_onboarding(request: Request) -> None:
-    """CSRF for /register and /profiles/select: a token bound to the user session or to the gate
-    cookie is accepted, so re-submitting a form after the session was created (Back, double tap)
-    reaches the idempotent handler instead of failing."""
-    ctx = await run_in_threadpool(deps.current_user, request)
-    form = await request.form()
-    token = form.get(tokens.CSRF_FIELD)
-    candidates = []
-    if ctx is not None:
-        candidates.append(("user", str(ctx.session.id)))
-    gate_cookie = request.cookies.get(deps.GATE_COOKIE)
-    if gate_cookie and gate.verify_gate_cookie(gate_cookie):
-        candidates.append(("gate", gate_cookie))
-    if not any(tokens.verify_csrf(scope, key, token) for scope, key in candidates):
-        raise deps.CSRFError()
-
-
-def _old_session_id(request: Request) -> uuid.UUID | None:
+def _old_session_id(request: Request):
     ctx = deps.current_user(request)
     return ctx.session.id if ctx else None
 
 
-def _check_profile_form(display_name: str, chair_id: str, chair_ids: set[uuid.UUID]):
+def _login_page(request: Request, *, username: str = "", error: bool = False, status: int = 200,
+                notice: str | None = None) -> Response:
+    with read_session() as db:
+        pending_notice = user_views.pending_notice(request, db)
+    return render(request, "user/login.html", {
+        "csrf_token": deps.form_csrf_token(request), "username": username[:FORM_TEXT_MAX], "error": error,
+        "notice": user_views.login_notice_key(notice), "pending_notice": pending_notice}, status_code=status)
+
+
+@router.get("/login")
+def login_page(request: Request, notice: str = ""):
+    return _login_page(request, notice=notice)
+
+
+@router.post("/login", dependencies=[Depends(deps.require_csrf)])
+def login_submit(request: Request, username: str = Form("", max_length=FORM_TEXT_MAX),
+                 password: str = Form("", max_length=PASSWORD_FORM_MAX)):
+    result = None
+    try:
+        with write_session() as db:
+            try:
+                result = login.sign_in(db, username=username, password=password, ip=deps.client_ip(request),
+                                       pending_id=deps.pending_id(request), old_session_id=_old_session_id(request))
+            except InvalidCredentials:
+                pass  # caught inside the block: the recorded failure is committed
+    except RateLimited:
+        return _rate_limited(request)
+    if result is None:
+        return _login_page(request, username=username, error=True, status=401)
+    return _signed_in(request, result)
+
+
+@router.post("/logout", dependencies=[Depends(deps.require_csrf)])
+def logout(request: Request, ctx: UserContext = Depends(deps.require_user)):
+    with write_session() as db:
+        sessions.revoke_session(db, ctx.session.id)
+    response = _redirect("/?notice=left")
+    deps.clear_session_cookie(response)
+    deps.forget_user(request)
+    return response
+
+
+# ----- registration and verification ----------------------------------------------------------
+def _register_page(request: Request, *, values: dict, errors: dict | None = None, status: int = 200) -> Response:
+    with read_session() as db:  # render inside the block: the chairs expire when the read transaction ends
+        return render(request, "user/register.html", {
+            "csrf_token": deps.form_csrf_token(request), "chairs": user_views.active_chairs(db), "values": values,
+            "errors": errors or {}, "name_max": DISPLAY_NAME_MAX,
+            "min_password_length": get_settings().password_min_length,
+            "pending_notice": user_views.pending_notice(request, db)}, status_code=status)
+
+
+def _register_errors(exc: InvalidInput | Conflict) -> dict[str, str]:
+    """{form field: string key} for a validation error of `registration.begin_member`."""
+    ctx = exc.context
+    if isinstance(exc, InvalidPassword):
+        return {"password": f"user.register.error_password_{ctx.get('reason')}"}
+    if isinstance(exc, Conflict):
+        return {"username": "user.register.error_username_taken"}
+    field = ctx.get("field")
+    if field == "username":
+        return {"username": f"user.register.error_username_{ctx.get('reason', 'chars')}"}
+    if field == "email":
+        return {"email": f"user.register.error_email_{ctx.get('reason', 'format')}"}
+    if field == "display_name":
+        return {"display_name": "user.register.error_name"}
+    if field == "chair":
+        return {"chair": "user.register.error_chair"}
+    if field == "privacy":
+        return {"privacy": "user.register.error_ack"}
+    return {"form": "user.register.error_form"}
+
+
+@router.get("/register")
+def register_page(request: Request):
+    return _register_page(request, values={})
+
+
+@router.post("/register", dependencies=[Depends(deps.require_csrf)])
+def register_submit(request: Request, background_tasks: BackgroundTasks,
+                    username: str = Form("", max_length=FORM_TEXT_MAX),
+                    display_name: str = Form("", max_length=FORM_TEXT_MAX),
+                    chair_id: str = Form("", max_length=64), email: str = Form("", max_length=FORM_TEXT_MAX),
+                    password: str = Form("", max_length=PASSWORD_FORM_MAX),
+                    password2: str = Form("", max_length=PASSWORD_FORM_MAX), privacy_ack: str = Form("")):
+    values = {"username": username, "display_name": display_name, "chair_id": chair_id[:64], "email": email}
+    if password != password2:
+        return _register_page(request, values=values, errors={"password2": "user.register.error_password_mismatch"},
+                              status=400)
+    try:
+        with write_session() as db:
+            result = registration.begin_member(
+                db, username=username, display_name=display_name, chair_id=deps.parse_uuid(chair_id), email=email,
+                password=password, privacy_ack=bool(privacy_ack), ip=deps.client_ip(request))
+            message = registration.mail_for_registration(result)
+    except RateLimited:
+        return _rate_limited(request)
+    except (InvalidInput, Conflict) as exc:
+        return _register_page(request, values=values, errors=_register_errors(exc), status=400)
+    background_tasks.add_task(send_in_background, message, result.email)
+    # The same page whether or not the address already has an account.
+    return render(request, "user/register_sent.html", {})
+
+
+@router.get("/verify/{token}")
+def verify_page(request: Request, token: str):
+    """Shows what will be created; writes nothing (mail scanners prefetch links)."""
+    with read_session() as db:
+        view = registration.peek_pending(db, token)
+    if view is None:
+        return _invalid_link(request)
+    return render(request, "user/verify.html", {"view": view, "csrf_token": deps.form_csrf_token(request),
+                                                "token": token})
+
+
+@router.post("/verify/{token}", dependencies=[Depends(deps.require_csrf)])
+def verify_submit(request: Request, token: str):
+    try:
+        with write_session() as db:
+            result = registration.confirm_member(
+                db, token, pending_id=deps.pending_id(request), old_session_id=_old_session_id(request),
+                ip=deps.client_ip(request))
+    except InvalidToken:
+        if deps.current_user(request) is not None:  # double tap: the first submit already signed this browser in
+            return _redirect("/account")
+        return _invalid_link(request)
+    except Conflict as exc:
+        key = ("user.verify.taken_email_body" if exc.context.get("reason") == registration.REASON_EMAIL_TAKEN
+               else "user.verify.taken_username_body")
+        return _message(request, "user.verify.taken_title", key, status=409, link=("/login", "user.login.title"))
+    except InvalidInput:
+        return _message(request, "user.verify.failed_title", "user.verify.failed_body", status=400)
+    return _signed_in(request, result, default="/account?notice=registered")
+
+
+# ----- password recovery ----------------------------------------------------------------------
+@router.get("/forgot")
+def forgot_page(request: Request):
+    return render(request, "user/forgot.html", {"csrf_token": deps.form_csrf_token(request)})
+
+
+@router.post("/forgot", dependencies=[Depends(deps.require_csrf)])
+def forgot_submit(request: Request, background_tasks: BackgroundTasks,
+                  username: str = Form("", max_length=FORM_TEXT_MAX)):
+    try:
+        with write_session() as db:
+            outcome = recovery.request_reset(db, username, deps.client_ip(request))
+    except RateLimited:
+        return _rate_limited(request)
+    if outcome.message is not None:
+        background_tasks.add_task(send_in_background, outcome.message, outcome.recipient)
+    # The same page for an unknown account, a known one and a capped recipient.
+    return render(request, "user/forgot_sent.html", {})
+
+
+def _reset_page(request: Request, token: str, view, *, error: str | None = None, status: int = 200) -> Response:
+    return render(request, "user/reset.html", {"view": view, "token": token, "error": error,
+                                               "csrf_token": deps.form_csrf_token(request),
+                                               "min_password_length": get_settings().password_min_length},
+                  status_code=status)
+
+
+@router.get("/reset/{token}")
+def reset_page(request: Request, token: str):
+    """Shows the form; writes nothing."""
+    with read_session() as db:
+        view = recovery.peek_reset(db, token)
+    if view is None:
+        return _invalid_link(request)
+    return _reset_page(request, token, view)
+
+
+@router.post("/reset/{token}", dependencies=[Depends(deps.require_csrf)])
+def reset_submit(request: Request, token: str, password: str = Form("", max_length=PASSWORD_FORM_MAX),
+                 password2: str = Form("", max_length=PASSWORD_FORM_MAX)):
+    with read_session() as db:
+        view = recovery.peek_reset(db, token)
+    if view is None:
+        return _invalid_link(request)
+    if password != password2:
+        return _reset_page(request, token, view, error="user.register.error_password_mismatch", status=400)
+    try:
+        with write_session() as db:
+            recovery.reset_password(db, token, password, ip=deps.client_ip(request))
+    except InvalidToken:
+        return _invalid_link(request)
+    except InvalidPassword as exc:
+        return _reset_page(request, token, view, error=f"user.register.error_password_{exc.context.get('reason')}",
+                           status=400)
+    return _redirect("/login?notice=reset")
+
+
+def _check_profile_form(display_name: str, chair_id: str, chair_ids: set):
     """-> (clean name | None, chair uuid | None, {field: string key})."""
     errors: dict[str, str] = {}
     name = None
@@ -214,79 +363,6 @@ def _check_profile_form(display_name: str, chair_id: str, chair_ids: set[uuid.UU
         errors["chair"] = "user.register.error_chair"
         cid = None
     return name, cid, errors
-
-
-def _register_page(request: Request, db: Session, *, token: str, values: dict, errors: dict | None = None,
-                   duplicates=None, status: int = 200) -> Response:
-    ctx = {"chairs": user_views.active_chairs(db), "registration_token": token, "values": values,
-           "errors": errors or {}, "duplicates": duplicates or [], "name_max": DISPLAY_NAME_MAX,
-           "pending_notice": user_views.pending_notice(request, db)}
-    return render(request, "user/register.html", ctx, status_code=status)
-
-
-@router.get("/register", dependencies=[Depends(deps.require_gate)])
-def register_page(request: Request, db: Session = Depends(deps.get_read_db)):
-    return _register_page(request, db, token=tokens.make_registration_token(), values={})
-
-
-@router.post("/register", dependencies=[Depends(deps.require_gate), Depends(_csrf_onboarding)])
-def register_submit(request: Request, display_name: str = Form(""), chair_id: str = Form(""),
-                    privacy_ack: str = Form(""), registration_token: str = Form(""),
-                    confirm_duplicate: str = Form("")):
-    nonce = tokens.verify_registration_token(registration_token)
-    values = {"display_name": display_name[:DISPLAY_NAME_MAX * 2], "chair_id": chair_id[:64]}
-    with read_session() as db:
-        chair_ids = {c.id for c in user_views.active_chairs(db)}
-        name, cid, errors = _check_profile_form(display_name, chair_id, chair_ids)
-        if not privacy_ack:
-            errors["ack"] = "user.register.error_ack"
-        if nonce is None:
-            errors["token"] = "user.register.error_token"
-        token = registration_token if nonce is not None else tokens.make_registration_token()
-        if errors:
-            return _register_page(request, db, token=token, values=values, errors=errors, status=400)
-        already_created = db.get(User, onboarding.registration_user_id(nonce)) is not None
-        if not confirm_duplicate and not already_created:
-            duplicates = users.find_same_name(db, display_name=name, chair_id=cid)
-            if duplicates:
-                return _register_page(request, db, token=token, values=values, duplicates=duplicates)
-    ip = ratelimit.ip_key(deps.client_ip(request))
-    try:
-        with write_session() as db:
-            bucket, limit, window = ratelimit.REGISTRATION
-            ratelimit.check_rate(db, bucket, ip, limit, window)
-            result = onboarding.register_and_start_session(
-                db, display_name=name, chair_id=cid, pending_id=deps.pending_id(request),
-                registration_nonce=nonce, old_session_id=_old_session_id(request))
-    except InvalidInput:
-        with read_session() as db:
-            return _register_page(request, db, token=token, values=values,
-                                  errors={"name": "user.register.error_name"}, status=400)
-    return _finish_onboarding(request, result, registration=True)
-
-
-@router.get("/profiles", dependencies=[Depends(deps.require_gate)])
-def profiles_page(request: Request, q: str = ""):
-    q = q.strip()[:SEARCH_MAX_LENGTH]
-    bucket, limit, window = ratelimit.PROFILE_SEARCH
-    with write_session() as db:
-        ratelimit.check_rate(db, bucket, ratelimit.ip_key(deps.client_ip(request)), limit, window)
-        found = users.search_profiles(db, q, limit=PROFILE_LIST_LIMIT + 1)
-        notice = user_views.pending_notice(request, db)
-    return render(request, "user/profiles.html", {
-        "profiles": found[:PROFILE_LIST_LIMIT], "more": len(found) > PROFILE_LIST_LIMIT, "limit": PROFILE_LIST_LIMIT,
-        "q": q, "pending_notice": notice})
-
-
-@router.post("/profiles/select", dependencies=[Depends(deps.require_gate), Depends(_csrf_onboarding)])
-def profiles_select(request: Request, user_id: str = Form("")):
-    uid = deps.parse_uuid(user_id)
-    if uid is None:
-        raise NotFound("profile not found")
-    with write_session() as db:
-        result = onboarding.select_profile_and_start_session(
-            db, user_id=uid, pending_id=deps.pending_id(request), old_session_id=_old_session_id(request))
-    return _finish_onboarding(request, result)
 
 
 # ----- account --------------------------------------------------------------------------------
@@ -330,16 +406,6 @@ def edit_submit(request: Request, display_name: str = Form(""), chair_id: str = 
         users.update_profile(db, user_id=ctx.user.id, display_name=name, chair_id=cid, actor_type="user",
                              ip=deps.client_ip(request))
     return _redirect("/account?notice=saved")
-
-
-@router.post("/account/leave", dependencies=[Depends(deps.require_csrf)])
-def leave(request: Request, ctx: UserContext = Depends(deps.require_user)):
-    with write_session() as db:
-        sessions.revoke_session(db, ctx.session.id)
-    response = _redirect("/?notice=left")
-    deps.clear_session_cookie(response)
-    deps.forget_user(request)
-    return response
 
 
 # ----- privacy --------------------------------------------------------------------------------

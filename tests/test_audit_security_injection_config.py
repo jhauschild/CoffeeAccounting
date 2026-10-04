@@ -21,7 +21,7 @@ from tests import factories
 from tests.admin_support import fast_hasher, login_as  # noqa: F401
 from tests.conftest import ROOT, reload_settings
 from tests.test_platform_web import PROD_ENV
-from tests.user_support import field, pass_gate
+from tests.user_support import field
 
 XSS = '"><svg/onload=alert(1)><script>x</script>'
 MARKERS = ("<svg/onload", "<script>x")
@@ -59,17 +59,25 @@ def test_xss_payloads_escaped_in_every_page(client, db, poisoned, login, app):
     victim = poisoned["user"]
     login(victim)
     event_id = ledger.recent_consumption(db, victim.id, 5)[-1].id
-    user_pages = ["/", "/account", "/account/edit", f"/coffee/done/{event_id}", "/profiles", "/profiles?q=" + XSS,
-                  "/register", "/join", "/privacy", "/coffee/single"]
+    user_pages = ["/", "/account", "/account/edit", f"/coffee/done/{event_id}", "/register", "/login",
+                  "/login?notice=" + XSS, "/forgot", "/privacy", "/coffee/single"]
     for p in user_pages:
         r = client.get(p)
         assert r.status_code == 200 and _clean(r.text), p
-    # registration form echo and duplicate warning
-    page = client.get("/register")
-    r = client.post("/register", data={"csrf_token": field(page.text, "csrf_token"), "privacy_ack": "",
-                                       "registration_token": field(page.text, "registration_token"),
-                                       "display_name": XSS, "chair_id": str(poisoned["chair"].id)})
-    assert _clean(r.text)
+    for p in ("/verify/" + XSS, "/reset/" + XSS):
+        assert _clean(client.get(p).text), p
+    # form echo on the pre-session pages (registration errors, failed sign-in)
+    anon = TestClient(app, raise_server_exceptions=False)
+    page = anon.get("/register")
+    r = anon.post("/register", data={"csrf_token": field(page.text, "csrf_token"), "privacy_ack": "",
+                                     "username": XSS, "display_name": XSS, "email": XSS, "password": XSS,
+                                     "password2": XSS, "chair_id": str(poisoned["chair"].id)})
+    assert r.status_code == 400 and _clean(r.text)
+    page = anon.get("/login")
+    r = anon.post("/login", data={"csrf_token": field(page.text, "csrf_token"), "username": XSS, "password": XSS})
+    assert r.status_code == 401 and _clean(r.text)
+    page = anon.get("/forgot")
+    assert _clean(anon.post("/forgot", data={"csrf_token": field(page.text, "csrf_token"), "username": XSS}).text)
     ac = TestClient(app, raise_server_exceptions=False)
     csrf = login_as(ac, poisoned["admin"].id)
     uid = victim.id
@@ -108,9 +116,12 @@ SQLI = ["' OR '1'='1", "%", "_", "\\", "a' --", "1); DROP TABLE users; --", "\" 
 
 
 @pytest.mark.parametrize("payload", SQLI)
-def test_sql_injection_attempts_are_inert(client, db, user, gate_cookie, app, payload):
-    r = client.get("/profiles", params={"q": payload})
-    assert r.status_code == 200 and "Alice" not in r.text  # no wildcard / tautology match
+def test_sql_injection_attempts_are_inert(client, db, user, app, payload):
+    page = client.get("/login")
+    r = client.post("/login", data={"csrf_token": field(page.text, "csrf_token"), "username": payload,
+                                    "password": payload})
+    assert r.status_code == 401 and "coffee_session" not in r.headers.get("set-cookie", "")  # no tautology match
+    assert client.get("/login", params={"notice": payload}).status_code == 200
     admin = _admin(db, role="global")
     c = TestClient(app, raise_server_exceptions=False)
     login_as(c, admin.id)
@@ -134,7 +145,7 @@ def test_no_header_injection_via_params(app, db):
     assert "x-evil" not in r.headers
 
 
-def test_chunked_body_over_limit_rejected(client, gate_cookie):
+def test_chunked_body_over_limit_rejected(client):
     def body():
         for _ in range(100):
             yield b"display_name=" + b"A" * 1024 + b"&"
@@ -181,11 +192,11 @@ def test_production_error_page_has_no_details(monkeypatch, db):
 
 
 def test_public_https_deployment_without_environment_fails_closed(monkeypatch):
-    for key in ("ENVIRONMENT", "SECRET_KEY", "ACCESS_CODE"):
+    for key in ("ENVIRONMENT", "SECRET_KEY"):
         monkeypatch.delenv(key, raising=False)
     with pytest.raises(ValueError):
         s = Settings(_env_file=None, public_base_url="https://coffee.example.org")
-        assert s.secret_key == DEV_SECRET_KEY  # what happens today: forgeable gate/CSRF/scan tokens
+        assert s.secret_key == DEV_SECRET_KEY  # what happens today: forgeable CSRF/scan tokens
 
 
 def test_database_errors_do_not_carry_bound_parameters_into_logs():
@@ -223,7 +234,7 @@ def test_secrets_absent_from_audit_metadata(app, db, chair):
 
 
 def test_development_defaults_only_allowed_for_local_http(monkeypatch):
-    for key in ("ENVIRONMENT", "SECRET_KEY", "ACCESS_CODE"):
+    for key in ("ENVIRONMENT", "SECRET_KEY"):
         monkeypatch.delenv(key, raising=False)
     for ok in ("http://localhost:8000", "http://127.0.0.1:8000", "http://[::1]:8000"):
         assert Settings(_env_file=None, public_base_url=ok).secret_key == DEV_SECRET_KEY

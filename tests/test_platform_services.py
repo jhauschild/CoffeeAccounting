@@ -1,4 +1,4 @@
-"""core-b: sessions, pending actions, onboarding, gate, rate limiting, signing."""
+"""core-b: sessions, pending actions, sign-in helper (onboarding), rate limiting, signing."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from sqlalchemy import func, select
 
 from app.db import read_session, write_session
 from app.models import ConsumptionEvent, PendingAction, RateLimitEvent, User, UserSession
-from app.services import gate, onboarding, pending, ratelimit, sessions, signing
-from app.services.errors import InvalidInput, NotFound, RateLimited, UserInactive
+from app.services import onboarding, pending, ratelimit, sessions, signing
+from app.services.errors import InvalidInput, RateLimited
 from app.services.ledger import record_coffee
 from app.services.users import merge_users, set_user_status
 from app.timeutil import utcnow
@@ -113,79 +113,55 @@ def test_pending_expires_after_one_hour():
         assert pending.consume_pending(db, "unknown") is None
 
 
-# ----- onboarding -----------------------------------------------------------------------------
-def test_register_without_pending(chair):
+# ----- sign-in helper (onboarding) -------------------------------------------------------------
+def test_pending_view_site_is_created_consumed_and_reported(user):
     with write_session() as db:
-        res = onboarding.register_and_start_session(db, display_name="  Carla  ", chair_id=chair.id)
-    assert res.created and res.event is None and res.coffee_status == onboarding.COFFEE_NONE
+        pid = pending.create_view_site_pending(db)
+        assert pending.create_view_site_pending(db) != pid  # no nonce to replay: every call is a new row
     with read_session() as db:
-        assert sessions.resolve_session(db, res.raw_token)[1].display_name == "Carla"
-    assert count(ConsumptionEvent) == 0
+        assert pending.get_pending(db, pid).kind == "view_site"
+    with write_session() as db:
+        res = onboarding.start_session_and_record(db, db.get(User, user.id), pending_id=pid)
+    assert res.coffee_status == onboarding.COFFEE_VIEW_SITE and res.event is None
+    assert count(PendingAction, PendingAction.consumed_at.is_not(None)) == 1 and count(ConsumptionEvent) == 0
+    with write_session() as db:  # used up: a second sign-in with the same cookie gets nothing
+        res = onboarding.start_session_and_record(db, db.get(User, user.id), pending_id=pid)
+    assert res.coffee_status == onboarding.COFFEE_EXPIRED
 
 
-@pytest.mark.parametrize("kind,qty", [("single", 1), ("double", 2)])
-def test_register_after_scan_records_once(chair, price, kind, qty):
+def test_start_session_without_pending(user):
     with write_session() as db:
-        pid = pending.create_pending(db, kind, f"scan-{kind}")
-    with write_session() as db:
-        res = onboarding.register_and_start_session(db, display_name="Dora", chair_id=chair.id, pending_id=pid,
-                                                    registration_nonce="reg-1")
-    assert res.coffee_status == onboarding.COFFEE_RECORDED
-    assert (res.event.quantity, res.event.amount_cents) == (qty, qty * 50)
-    assert res.event.session_id == res.session.id and res.event.user_id == res.user.id
-    # second submit of the same form: same profile, same coffee, fresh session
-    with write_session() as db:
-        again = onboarding.register_and_start_session(db, display_name="Dora", chair_id=chair.id, pending_id=pid,
-                                                      registration_nonce="reg-1", old_session_id=res.session.id)
-    assert not again.created and again.user.id == res.user.id and again.event.id == res.event.id
-    assert count(User) == 1 and count(ConsumptionEvent) == 1
+        res = onboarding.start_session_and_record(db, db.get(User, user.id))
+    assert res.event is None and res.coffee_status == onboarding.COFFEE_NONE
     with read_session() as db:
-        assert sessions.resolve_session(db, res.raw_token) is None  # rotated
-        assert sessions.resolve_session(db, again.raw_token) is not None
+        assert sessions.resolve_session(db, res.raw_token)[1].id == user.id
 
 
-def test_register_invalid_input_and_inactive_chair(db, chair):
-    off = factories.make_chair(db, short_name="OFF", active=False)
-    with write_session() as w, pytest.raises(InvalidInput):
-        onboarding.register_and_start_session(w, display_name="   ", chair_id=chair.id)
-    with write_session() as w, pytest.raises(InvalidInput):
-        onboarding.register_and_start_session(w, display_name="Eve", chair_id=off.id)
-    assert count(User) == 0 and count(UserSession) == 0
-
-
-def test_register_no_price_keeps_registration_and_pending(chair):
-    with write_session() as db:
-        pid = pending.create_pending(db, "single", "scan-np")
-    with write_session() as db:
-        res = onboarding.register_and_start_session(db, display_name="Finn", chair_id=chair.id, pending_id=pid)
-    assert res.coffee_status == onboarding.COFFEE_NO_PRICE and res.event is None
-    assert count(User) == 1 and count(ConsumptionEvent) == 0
-    assert count(PendingAction, PendingAction.consumed_at.is_(None)) == 1
-
-
-def test_select_profile_rotates_and_records(user, price):
+def test_start_session_rotates_and_records(user, price):
     with write_session() as db:
         old, old_raw = sessions.create_session(db, user.id)
         pid = pending.create_pending(db, "double", "scan-sel")
     with write_session() as db:
-        res = onboarding.select_profile_and_start_session(db, user_id=user.id, pending_id=pid, old_session_id=old.id)
+        res = onboarding.start_session_and_record(db, db.get(User, user.id), pending_id=pid, old_session_id=old.id)
     assert res.coffee_status == onboarding.COFFEE_RECORDED and res.event.quantity == 2
+    assert res.event.session_id == res.session.id and res.event.user_id == user.id
     with read_session() as db:
         assert sessions.resolve_session(db, old_raw) is None
+        assert sessions.resolve_session(db, res.raw_token) is not None
     # the same pending action can't be used again (consumed) -> expired, nothing recorded
     with write_session() as db:
-        res2 = onboarding.select_profile_and_start_session(db, user_id=user.id, pending_id=pid)
+        res2 = onboarding.start_session_and_record(db, db.get(User, user.id), pending_id=pid)
     assert res2.coffee_status == onboarding.COFFEE_EXPIRED and count(ConsumptionEvent) == 1
 
 
-def test_select_profile_rejects_inactive_merged_unknown(db, user, chair, global_admin):
-    dup = factories.make_user(db, display_name="Dup", chair=chair)
-    with write_session() as w:
-        merge_users(w, admin=w.merge(global_admin), duplicate_id=dup.id, target_id=user.id)
-    with write_session() as w, pytest.raises(UserInactive):
-        onboarding.select_profile_and_start_session(w, user_id=dup.id)
-    with write_session() as w, pytest.raises(NotFound):
-        onboarding.select_profile_and_start_session(w, user_id=uuid.uuid4())
+def test_start_session_no_price_keeps_pending(user):
+    with write_session() as db:
+        pid = pending.create_pending(db, "single", "scan-np")
+    with write_session() as db:
+        res = onboarding.start_session_and_record(db, db.get(User, user.id), pending_id=pid)
+    assert res.coffee_status == onboarding.COFFEE_NO_PRICE and res.event is None
+    assert count(ConsumptionEvent) == 0 and count(UserSession) == 1
+    assert count(PendingAction, PendingAction.consumed_at.is_(None)) == 1
 
 
 def test_pending_nonce_used_by_other_profile_is_not_shown(db, user, chair, price):
@@ -194,7 +170,7 @@ def test_pending_nonce_used_by_other_profile_is_not_shown(db, user, chair, price
         record_coffee(w, user_id=other.id, kind="single", nonce="shared-nonce")
         pid = pending.create_pending(w, "single", "shared-nonce")
     with write_session() as w:
-        res = onboarding.select_profile_and_start_session(w, user_id=user.id, pending_id=pid)
+        res = onboarding.start_session_and_record(w, w.get(User, user.id), pending_id=pid)
     assert res.event is None and res.coffee_status == onboarding.COFFEE_EXPIRED
 
 
@@ -217,29 +193,13 @@ def _run_threads(n, target):
     return results, errors
 
 
-def test_threaded_double_submit_registration(chair, price):
-    with write_session() as db:
-        pid = pending.create_pending(db, "double", "scan-thread")
-
-    def submit():
-        with write_session() as db:
-            return onboarding.register_and_start_session(db, display_name="Gina", chair_id=chair.id,
-                                                         pending_id=pid, registration_nonce="reg-thread")
-
-    results, errors = _run_threads(4, submit)
-    assert not errors and len(results) == 4
-    assert count(User) == 1 and count(ConsumptionEvent) == 1
-    assert sum(r.created for r in results) == 1
-    assert {r.event.id for r in results} == {results[0].event.id}
-
-
-def test_threaded_double_submit_selection(user, price):
+def test_threaded_double_sign_in_records_once(user, price):
     with write_session() as db:
         pid = pending.create_pending(db, "single", "scan-thread-sel")
 
     def submit():
         with write_session() as db:
-            return onboarding.select_profile_and_start_session(db, user_id=user.id, pending_id=pid)
+            return onboarding.start_session_and_record(db, db.get(User, user.id), pending_id=pid)
 
     results, errors = _run_threads(4, submit)
     assert not errors
@@ -247,23 +207,7 @@ def test_threaded_double_submit_selection(user, price):
     assert sorted(r.coffee_status for r in results).count(onboarding.COFFEE_RECORDED) == 1
 
 
-# ----- gate, rate limit, signing -----------------------------------------------------------------
-def test_access_code_and_gate_cookie(monkeypatch):
-    assert gate.check_access_code("test-access-code")
-    assert gate.check_access_code(" test-access-code ")
-    assert not gate.check_access_code("test-access-cod")
-    assert not gate.check_access_code("") and not gate.check_access_code(None)
-    now = utcnow()
-    cookie = gate.make_gate_cookie(now=now)
-    assert gate.verify_gate_cookie(cookie, now=now + timedelta(minutes=59))
-    assert not gate.verify_gate_cookie(cookie, now=now + timedelta(minutes=61))
-    assert not gate.verify_gate_cookie(cookie[:-2] + "xx", now=now)
-    assert not gate.verify_gate_cookie(None)
-    monkeypatch.setenv("ACCESS_CODE", "rotated-access-code")
-    reload_settings()
-    assert not gate.verify_gate_cookie(cookie, now=now)  # rotating the code invalidates cookies
-
-
+# ----- rate limit, signing -----------------------------------------------------------------
 def test_rate_limit_window():
     now = utcnow()
     with write_session() as db:

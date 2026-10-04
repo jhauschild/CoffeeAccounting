@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% from "user/_fields.html" import field %}
+{% block title %}{{ t("user.forgot.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>{{ t("user.forgot.title") }}</h1>
+  <p>{{ t("user.forgot.intro") }}</p>
+  <form method="post" action="/forgot">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {{ field("username", t("user.forgot.username"), "", autocomplete="username") }}
+    <button type="submit" class="button-block">{{ t("user.forgot.submit") }}</button>
+  </form>
+  <p><a href="/login">{{ t("user.login.title") }}</a></p>
+</section>
+{% endblock %}

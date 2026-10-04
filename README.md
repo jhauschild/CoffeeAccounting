@@ -5,7 +5,7 @@ A small, self-hosted web app that records coffee consumption and payments in a u
 ## Contents
 
 1. [Architecture](#architecture)
-2. [Trust, access gate and authentication model](#trust-access-gate-and-authentication-model)
+2. [Trust and authentication model](#trust-and-authentication-model)
 3. [Money and price history](#money-and-price-history)
 4. [Local development](#local-development)
 5. [Production deployment](#production-deployment)
@@ -42,15 +42,15 @@ The ledger is append-only: consumption events, payment events, prices and the au
 
 Health endpoints: `GET /healthz` (process is up) and `GET /readyz` (database reachable **and** migrated to the current head).
 
-## Trust, access gate and authentication model
+## Trust and authentication model
 
-- **Normal users have no passwords, no email, no notes.** A profile is a display name plus a chair. A browser becomes "that person" through a random 256-bit session cookie (`coffee_session`, HttpOnly, Secure, SameSite=Lax, 180 days by default). Only the SHA-256 hash of the token is stored.
-- **Department access code.** Because the app is reachable from the internet, nobody can create or select a profile (or even list profiles) without the shared `ACCESS_CODE`. It is entered once per browser on `/join`; a correct code unlocks `/register` and `/profiles` for one hour. A browser that already has a valid session never needs it. The QR codes never contain the code; print it on a sign next to them or hand it out some other way. Wrong attempts are rate-limited (10 per 15 minutes per IP).
-- **Rotating the access code:** edit `ACCESS_CODE` in `.env`, then `docker compose up -d --force-recreate`. Existing user sessions keep working; only new registrations and profile selections need the new code. Rotate it when somebody who should not have it learns it.
+- **Accounts.** Members register at `/register` with a username, display name, chair, university e-mail address and password, and confirm by a mailed link (`/verify/{token}`; opening the link writes nothing, the confirm button does). Sign-in is at `/login` with username and password (Argon2id; one generic failure message; 5 failures per 15 minutes per username and IP, plus a per-IP cap). A lost password is reset at `/forgot` with a mailed single-use link (`/reset/{token}`, valid 1 hour; for a guest account the mail goes to the sponsor); a reset signs the account out everywhere. A browser stays signed in through a random 256-bit session cookie (`coffee_session`, HttpOnly, Secure, SameSite=Lax, 180 days by default); only the SHA-256 hash of the token is stored. Scanning a coffee QR code without a session stores the coffee for one hour and sends the browser to `/login`; after sign-in it is recorded exactly once.
 - **Administrators.** The head admin (role `global`) is created from the command line and logs in with username + password (Argon2id, at least 12 characters); there is no TOTP prompt at later logins. A group admin (role `chair`, a promoted member) logs in at the same page with the account username and account password and sees only their own chair. Admin sessions use a separate cookie (`coffee_admin`, `Path=/admin`, 12 hours by default). While `BALANCE_TOTP_REQUIRED` is true (the production default) an admin without TOTP can only reach the one-time enrolment (QR code, then 8 single-use recovery codes). Login failures are rate-limited in the database.
 - Every administrative action is written to the append-only audit log.
 
 > Normal-user identity is based on a long-lived browser session and voluntary profile selection. It does not cryptographically prove the user's real-world identity. This is intentional for a low-stakes, trust-based departmental coffee ledger.
+>
+> From v2 on a profile is an account: a university e-mail address (members) or a sponsor's vouching (guests) stands behind the username, and the browser session starts with a password sign-in.
 
 ## Money and price history
 
@@ -100,7 +100,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"   # use as SECRET_
 chmod 600 .env
 ```
 
-Edit `.env`: set `PUBLIC_BASE_URL` (https), `SECRET_KEY`, `ACCESS_CODE`, `OPERATOR_CONTACT` and `TRUSTED_PROXY_IPS` (see step 4). In production the app **refuses to start** when `PUBLIC_BASE_URL` is not https or when `SECRET_KEY` / `ACCESS_CODE` are missing, too short (32 / 8 characters) or still placeholders. `ENVIRONMENT=production` also enables HSTS and Secure cookies and disables the API docs.
+Edit `.env`: set `PUBLIC_BASE_URL` (https), `SECRET_KEY`, `MAIL_FROM`, `OPERATOR_CONTACT` and `TRUSTED_PROXY_IPS` (see step 4). In production the app **refuses to start** when `PUBLIC_BASE_URL` is not https or when `SECRET_KEY` is missing, shorter than 32 characters or a placeholder. `ENVIRONMENT=production` also enables HSTS and Secure cookies and disables the API docs.
 
 ### 2. Build, migrate, start
 
@@ -142,10 +142,10 @@ Allow only SSH, 80 and 443 inbound (for example `ufw allow OpenSSH && ufw allow 
 ### 6. Check the instance
 
 ```bash
-ACCESS_CODE='<your access code>' scripts/smoke.sh https://coffee.example.org
+SMOKE_USERNAME='<test account>' SMOKE_PASSWORD='<its password>' scripts/smoke.sh https://coffee.example.org
 ```
 
-`scripts/smoke.sh --health-only URL` checks only health and headers. The full run needs a chair and a price (steps below) and **writes to the ledger**: it registers a profile named "Smoke Test <timestamp>", records a single and a double, replays a POST, and undoes what the undo window allows. Deactivate that profile afterwards in `/admin/users`.
+`scripts/smoke.sh --health-only URL` checks only health and headers. The full run needs a price (steps below) and an existing verified test account (register one through `/register`), and **writes to the ledger**: it scans without a session, signs in (which records the pending single), records a double, replays a POST, and undoes what the undo window allows. Deactivate that account afterwards in `/admin/users`.
 
 ### Without Docker
 
@@ -168,7 +168,6 @@ Set in `.env` (see `.env.example`, which documents each one). Defaults are the a
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | public address; content of the QR codes; https in production |
 | `DATABASE_URL` | `sqlite:///./data/coffee.db` | SQLite only; Compose forces `sqlite:////data/coffee.db` |
 | `SECRET_KEY` | dev value | signs tokens and cookies; random, >= 32 characters in production |
-| `ACCESS_CODE` | dev value | v1 department access code; optional in production (removed in a later v2 task) |
 | `TRUSTED_PROXY_IPS` | empty | IPs/CIDRs whose `X-Forwarded-*` are trusted |
 | `SESSION_LIFETIME_DAYS` | `180` | user browser session lifetime |
 | `ADMIN_SESSION_HOURS` | `12` | admin session lifetime |
@@ -242,7 +241,7 @@ Chairs (research groups; the label is `CHAIR_LABEL`) are created by a global adm
 
 ## QR codes
 
-The admin area has a QR page (`/admin/qr`) that shows both URLs and the current price and produces printable SVG codes (one per half page, large "SINGLE" / "DOUBLE" labels, optional free-text line such as "Access code: ...", which is **not stored**). The codes contain only `{PUBLIC_BASE_URL}/coffee/single` and `/coffee/double`. From the command line:
+The admin area has a QR page (`/admin/qr`) that shows both URLs and the current price and produces printable SVG codes (one per half page, large "SINGLE" / "DOUBLE" labels, optional free-text line such as a short instruction, which is **not stored**). The codes contain only `{PUBLIC_BASE_URL}/coffee/single` and `/coffee/double`. From the command line:
 
 ```bash
 docker compose run --rm app python -m app.cli qr --out /backups/qr    # appears in ./backups/qr on the host
@@ -262,7 +261,7 @@ The URLs come from `PUBLIC_BASE_URL`; reprint if it changes.
   docker compose run --rm app python -m app.cli check-ledger
   ```
 - **CSV exports** (users with balances, ledger by date range and chair) are in the admin area; they are formula-injection safe and audited.
-- **Merging duplicate profiles, payments, corrections, reversals, deactivation:** admin area, user detail page. Merging never moves or edits ledger events.
+- **Merging duplicate accounts, payments, corrections, reversals, deactivation:** admin area, user detail page. Merging never moves or edits ledger events.
 
 ## Backup and restore
 
@@ -306,7 +305,7 @@ docker compose stop app                                    # 4. brief downtime a
 docker compose run --rm app alembic upgrade head           # 5. migrate explicitly
 docker compose up -d                                       # 6. start
 curl -fsS http://127.0.0.1:8000/readyz                     # 7. ready?
-ACCESS_CODE='...' scripts/smoke.sh https://coffee.example.org   # 8. optional full check (writes a test profile)
+SMOKE_USERNAME=... SMOKE_PASSWORD=... scripts/smoke.sh https://coffee.example.org   # 8. optional full check (writes to the ledger)
 ```
 
 Read the release notes and `.env.example` for new variables first. If something goes wrong, restore the backup from step 1 and start the previous image.
@@ -315,18 +314,17 @@ Read the release notes and `.env.example` for new variables first. If something 
 
 - HTTPS only in production (startup refuses otherwise), HSTS, Secure/HttpOnly/SameSite cookies, strict CSP (`default-src 'self'`, no inline scripts or styles, `frame-ancestors 'none'`), `X-Content-Type-Options`, `Referrer-Policy: same-origin`, request size limit (64 KiB, also at the proxy), no stack traces and no API docs in production, redirects only to fixed internal paths.
 - CSRF protection on every state-changing form, signed one-time scan tokens, `Sec-Fetch-Site`/`Origin` checks; scanning never changes state on GET.
-- Rate limits, stored in the database (so restarts do not reset them): access code, registration, profile search, admin login.
+- Rate limits, stored in the database (so restarts do not reset them): registration, sign-in, password reset requests, admin login.
 - No external services, CDNs, fonts, trackers or analytics.
-- Secrets live only in `.env` (mode 600, not in the image or the repository); the access code, tokens, passwords and TOTP secrets are never logged.
+- Secrets live only in `.env` (mode 600, not in the image or the repository); tokens, passwords and TOTP secrets are never logged.
 - Keep the host patched, the proxy as the only public listener, `/admin` restricted by IP where possible, and backups readable only by the operator (they contain every name and balance).
 - Dependencies: run `pip-audit -r requirements.txt` before each release.
 
 ## Known limitations
 
-- Normal-user identity is based on a long-lived browser session and voluntary profile selection. It does not cryptographically prove the user's real-world identity. This is intentional for a low-stakes, trust-based departmental coffee ledger.
-- **Single process:** run exactly one app process (one uvicorn worker, one container). Rate limiting, SQLite's single write lock and the session/gate handling assume it. Do not scale out and do not raise `--workers`.
-- **Cookie jars:** phone cameras, in-app QR scanners and home-screen web apps may use a different cookie jar than the browser where the user registered, so the scan looks like a new browser. The recovery path is "use existing profile" on `/join` (access code, search, select), which is meant to be quick.
-- **Shared access code:** anyone who knows it can create profiles or select someone else's profile. Choosing another person's profile books coffee to them; this is the accepted trust model.
+- Identity is an account with a university e-mail address (members) or a sponsor's vouching (guests). It does not cryptographically prove the user's real-world identity. This is intentional for a low-stakes, trust-based departmental coffee ledger.
+- **Single process:** run exactly one app process (one uvicorn worker, one container). Rate limiting, SQLite's single write lock and the in-process mail status assume it. Do not scale out and do not raise `--workers`.
+- **Cookie jars:** phone cameras, in-app QR scanners and home-screen web apps may use a different cookie jar than the browser where the user registered, so the scan looks like a new browser. The recovery path is to sign in (`/login`): the scanned coffee is kept for one hour and recorded after sign-in.
 - **No erasure tooling in v1.** Deactivating a profile is the only removal mechanism; ledger rows and the audit log are append-only and are not deleted or anonymized. The `/privacy` page states that profiles can only be deactivated and ledger entries are not deleted.
 - SQLite on one server; no high availability. Back up regularly and copy backups off the machine.
 - Bad shared-cache or network filesystems (NFS, some cloud volume types) are not supported for the SQLite file; use a local disk.

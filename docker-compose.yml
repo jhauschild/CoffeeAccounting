@@ -1,6 +1,6 @@
 # Production-style deployment: one app service behind a reverse proxy on the host (see deploy/).
 #
-#   cp .env.example .env            # edit: PUBLIC_BASE_URL, SECRET_KEY, ACCESS_CODE, ...
+#   cp .env.example .env            # edit: PUBLIC_BASE_URL, SECRET_KEY, ...
 #   docker compose build
 #   docker compose run --rm app alembic upgrade head     # explicit migration step (never implicit)
 #   docker compose up -d
@@ -12,7 +12,7 @@ services:
     image: coffee-ledger:latest
     env_file: .env
     environment:
-      # Never fall back to the development defaults (published SECRET_KEY / ACCESS_CODE), whatever .env says.
+      # Never fall back to the development defaults (published SECRET_KEY), whatever .env says.
       ENVIRONMENT: production
       # The database always lives in the named volume, whatever .env says.
       DATABASE_URL: sqlite:////data/coffee.db

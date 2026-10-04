@@ -1,4 +1,4 @@
-"""user-web: success page, undo, account, profile edit, leave, privacy, cookies, redirects, CSP."""
+"""user-web: success page, undo, account, profile edit, sign-out, privacy, cookies, redirects, CSP."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from app.web import tokens
 from tests import factories
 from tests.conftest import ROOT, reload_settings
 from tests.test_platform_web import PROD_ENV
-from tests.user_support import ACCESS_CODE, event_id_from, events, field, pass_gate, register, scan
+from tests.user_support import PASSWORD, event_id_from, events, field, make_account, scan, sign_in
 
 
 def _csrf_for(client, raw_token: str) -> str:
@@ -181,7 +181,7 @@ def test_account_page(client, db, user, global_admin, price, login):
     assert "Single" in page and "Double" in page and "Payment" in page and "€1.25" in page
     assert "Shots consumed" in page and "€1.50" in page  # 3 shots * 0.50
     assert "Credit" not in page  # 1.50 consumed - 1.25 paid = 0.25 owed
-    assert 'action="/account/leave"' in page and 'href="/account/edit"' in page
+    assert 'action="/logout"' in page and 'href="/account/edit"' in page
 
 
 def test_account_without_price_and_history(client, db, user, login):
@@ -191,7 +191,7 @@ def test_account_without_price_and_history(client, db, user, login):
 
 
 def test_account_marks_undone_coffee_and_requires_session(client, db, user, price, login):
-    assert client.get("/account", follow_redirects=False).headers["location"] == "/join"
+    assert client.get("/account", follow_redirects=False).headers["location"] == "/login"
     raw = login(user)
     event = event_id_from(scan(client))
     _undo(client, event, _csrf_for(client, raw))
@@ -251,12 +251,12 @@ def test_edit_keeps_inactive_current_chair_selectable(client, db, user, chair, l
     assert _edit(client, "Alice Renamed", chair).status_code == 303
 
 
-# ----- leave ----------------------------------------------------------------------------------
-def test_leave_revokes_the_session(client, db, user, price, login):
+# ----- sign out ----------------------------------------------------------------------------------
+def test_logout_revokes_the_session(client, db, user, price, login):
     raw = login(user)
     csrf = _csrf_for(client, raw)
-    assert client.post("/account/leave", data={}, follow_redirects=False).status_code == 403
-    r = client.post("/account/leave", data={"csrf_token": csrf}, follow_redirects=False)
+    assert client.post("/logout", data={}, follow_redirects=False).status_code == 403
+    r = client.post("/logout", data={"csrf_token": csrf}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/?notice=left"
     assert 'coffee_session=""' in r.headers["set-cookie"] or "Max-Age=0" in r.headers["set-cookie"]
     db.rollback()
@@ -264,8 +264,8 @@ def test_leave_revokes_the_session(client, db, user, price, login):
     assert db.query(UserSession).filter(UserSession.revoked_at.is_not(None)).count() == 1
     stale = TestClient(client.app)
     stale.cookies.set("coffee_session", raw)
-    assert stale.get("/account", follow_redirects=False).headers["location"] == "/join"
-    assert "has been removed" in client.get("/?notice=left").text
+    assert stale.get("/account", follow_redirects=False).headers["location"] == "/login"
+    assert "signed out" in client.get("/?notice=left").text
 
 
 def test_admin_revocation_stops_scans(client, db, user, price, login):
@@ -274,12 +274,13 @@ def test_admin_revocation_stops_scans(client, db, user, price, login):
 
     with write_session() as w:
         sessions.revoke_user_sessions(w, user.id)
-    assert scan(client).headers["location"] == "/join" and events(db) == []
+    assert scan(client).headers["location"] == "/login" and events(db) == []
 
 
 # ----- home, privacy --------------------------------------------------------------------------
 def test_home_for_guests_and_users(client, db, user, login):
-    assert 'href="/join"' in client.get("/").text
+    page = client.get("/").text
+    assert 'href="/login"' in page and 'href="/register"' in page
     login(user)
     page = client.get("/").text
     assert "Alice Example" in page and 'href="/coffee/single"' in page and 'href="/coffee/double"' in page
@@ -292,7 +293,7 @@ def test_privacy_page(client, monkeypatch):
     r = TestClient(create_app()).get("/privacy")
     assert r.status_code == 200
     for expected in ("seven years", "coffee-admin@example.org", "trust-based", "audit", "session", "display name",
-                     "access code"):
+                     "e-mail", "hash"):
         assert expected.lower() in r.text.lower()
     assert "http://" not in r.text and "https://" not in r.text
 
@@ -302,16 +303,14 @@ def test_session_cookie_flags_in_production(monkeypatch, db):
     for key, value in PROD_ENV.items():
         monkeypatch.setenv(key, value)
     reload_settings()
-    chair = factories.make_chair(db, short_name="PRD")
+    account = make_account(db, "Prod User", username="produser")
     with TestClient(create_app(), base_url="https://coffee.example.org") as c:
-        r = c.post("/join", data={"code": PROD_ENV["ACCESS_CODE"]}, follow_redirects=False)
-        gate_cookie = next(h for h in r.headers.get_list("set-cookie") if h.startswith("coffee_gate="))
-        assert {"HttpOnly", "Secure", "SameSite=lax", "Path=/"} <= {p.strip() for p in gate_cookie.split(";")}
-        page = c.get("/register")
-        r = c.post("/register", data={"csrf_token": field(page.text, "csrf_token"),
-                                      "registration_token": field(page.text, "registration_token"),
-                                      "display_name": "Prod User", "chair_id": str(chair.id), "privacy_ack": "1"},
-                   follow_redirects=False)
+        page = c.get("/login")
+        csrf_cookie = next(h for h in page.headers.get_list("set-cookie") if h.startswith("coffee_csrf="))
+        assert {"HttpOnly", "Secure", "SameSite=lax", "Path=/"} <= {p.strip() for p in csrf_cookie.split(";")}
+        r = c.post("/login", data={"csrf_token": field(page.text, "csrf_token"), "username": account.username,
+                                   "password": PASSWORD}, follow_redirects=False)
+        assert r.status_code == 303
         cookie = next(h for h in r.headers.get_list("set-cookie") if h.startswith("coffee_session="))
         parts = {p.strip().split("=")[0]: p.strip() for p in cookie.split(";")}
         assert {"HttpOnly", "Secure", "Path"} <= set(parts) and parts["SameSite"] == "SameSite=lax"
@@ -321,8 +320,8 @@ def test_session_cookie_flags_in_production(monkeypatch, db):
 
 
 def test_session_cookie_flags_in_development(client, db, chair):
-    pass_gate(client)
-    r = register(client, "Dev User", chair)
+    account = make_account(db, "Dev User", chair)
+    r = sign_in(client, account)
     cookie = next(h for h in r.headers.get_list("set-cookie") if h.startswith("coffee_session="))
     assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Path=/" in cookie and "Secure" not in cookie
 
@@ -338,33 +337,29 @@ def test_no_open_redirect_anywhere(client, db, chair, user, price, evil):
         loc = response.headers.get("location")
         assert loc is None or (loc.startswith("/") and not loc.startswith("//") and "evil" not in loc), loc
 
-    fixed(client.get("/join", params=extras, follow_redirects=False))
-    fixed(client.post("/join", data={"code": ACCESS_CODE, **extras}, follow_redirects=False))
+    fixed(client.get("/login", params=extras, follow_redirects=False))
+    account = make_account(db, "Eve", chair, username="eve")
+    page = client.get("/login")
+    fixed(client.post("/login", data={"csrf_token": field(page.text, "csrf_token"), "username": account.username,
+                                      "password": PASSWORD, **extras}, follow_redirects=False))
     fixed(client.get("/register", params=extras, follow_redirects=False))
-    page = client.get("/register")
-    fixed(client.post("/register", data={"csrf_token": field(page.text, "csrf_token"),
-                                         "registration_token": field(page.text, "registration_token"),
-                                         "display_name": "Eve", "chair_id": str(chair.id), "privacy_ack": "1",
-                                         **extras}, follow_redirects=False))
     token = tokens.make_scan_token("single")
     fixed(client.post("/coffee/single", data={"token": token, **extras}, follow_redirects=False))
     fixed(client.get("/account", params=extras, follow_redirects=False))
     fixed(client.get("/?notice=" + evil, follow_redirects=False))
     csrf = _csrf_for(client, client.cookies.get("coffee_session"))
-    fixed(client.post("/account/leave", data={"csrf_token": csrf, **extras}, follow_redirects=False))
+    fixed(client.post("/logout", data={"csrf_token": csrf, **extras}, follow_redirects=False))
     # The unknown notice keyword is ignored, never echoed.
     assert "evil" not in client.get("/account?notice=" + evil, follow_redirects=True).text
 
 
 def test_pages_have_no_inline_script_or_style_and_no_external_assets(client, db, user, price, login, chair):
-    pages = ["/", "/privacy", "/join", "/coffee/single"]
+    pages = ["/", "/privacy", "/login", "/login?notice=reset", "/register", "/forgot", "/coffee/single"]
     for path in pages:
         client.get(path)
-    pass_gate(client)
-    pages += ["/register", "/profiles", "/join"]
     login(user)
     done = scan(client).headers["location"]
-    pages += [done, "/account", "/account/edit", "/", "/join"]
+    pages += [done, "/account", "/account/edit", "/", "/login", "/register"]
     for path in pages:
         r = client.get(path)
         assert r.status_code == 200, path
@@ -386,6 +381,11 @@ def test_all_string_keys_used_by_templates_and_routes_exist():
     for kind in ("single", "double"):
         used |= {f"user.scan.title_{kind}", f"user.scan.button_{kind}", f"user.done.{kind}", f"user.pending.{kind}"}
     used |= {f"user.account.type_{k}" for k in ("single", "double", "reversal", "adjustment")}
+    used |= {"user.pending.view_site", "user.register.error_name"}
+    used |= {f"user.register.error_password_{r}" for r in ("too_short", "too_long", "equals_username",
+                                                         "equals_email_local")}
+    used |= {f"user.register.error_username_{r}" for r in ("length", "chars")}
+    used |= {f"user.register.error_email_{r}" for r in ("format", "domain")}
     missing = sorted(k for k in used if not strings.has(k))
     assert not missing, missing
     assert len(used) > 60

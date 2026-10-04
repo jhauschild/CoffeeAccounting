@@ -63,3 +63,10 @@ class InvalidToken(ServiceError):
     One error for all three so the response never says which."""
 
     code = "invalid_token"
+
+
+class InvalidCredentials(ServiceError):
+    """Sign-in failed. One error for an unknown username, a wrong password and an account that cannot sign in
+    (inactive, merged, unverified), so the response never says which."""
+
+    code = "invalid_credentials"

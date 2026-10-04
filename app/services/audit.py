@@ -10,7 +10,7 @@ from app.models import ACTOR_TYPES, AuditLog
 from app.timeutil import utcnow
 
 # Metadata keys that suggest a secret is being logged. Logging them is a programming error.
-_FORBIDDEN_KEY_PARTS = ("password", "secret", "token", "cookie", "access_code", "totp_code", "otp_code")
+_FORBIDDEN_KEY_PARTS = ("password", "secret", "token", "cookie", "totp_code", "otp_code")
 
 
 def _check_metadata(metadata: dict) -> None:
