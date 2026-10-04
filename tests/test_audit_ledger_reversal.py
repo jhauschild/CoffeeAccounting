@@ -15,7 +15,7 @@ from app.services.checker import check_ledger
 from app.services.errors import AlreadyReversed, Conflict, UndoNotAllowed
 from app.timeutil import utcnow
 from tests import factories
-from tests.admin_support import fast_hasher, login_as, make_real_admin  # noqa: F401
+from tests.admin_support import fast_hasher, login_as, make_real_admin, submit  # noqa: F401
 from tests.user_support import event_id_from, events, field, make_account, post_scan, sign_in
 
 
@@ -123,8 +123,7 @@ def test_admin_can_reverse_merged_duplicates_event_from_target_page(app, db, cha
     admin_id, _ = make_real_admin(username="boss")
     with TestClient(app, raise_server_exceptions=False) as c:
         csrf = login_as(c, admin_id)
-        r = c.post(f"/admin/users/{target.id}/events/{event.id}/reverse", data={"csrf_token": csrf},
-                   follow_redirects=False)
+        r = submit(c, csrf, f"/admin/users/{target.id}/events/{event.id}/reverse")
         assert r.status_code == 303 and "err=" not in r.headers["location"], r.headers["location"]
     assert reversals(db, event.id) == 1, r.headers["location"]
     db.rollback()

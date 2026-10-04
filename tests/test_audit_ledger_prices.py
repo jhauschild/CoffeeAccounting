@@ -82,17 +82,16 @@ def test_adjustment_amount_is_stored_verbatim_and_never_recomputed(db, user, pri
 
 
 def test_adjustment_route_rejects_non_integer_quantity(app, db, user, price):
-    from tests.admin_support import login_as, make_real_admin, new_client
+    from tests.admin_support import login_as, make_real_admin, new_client, submit
 
     admin_id, _ = make_real_admin(username="boss")
     c = new_client(app)
     csrf = login_as(c, admin_id)
     for qty in ("1.5", "2e1", "", "--1", "99999"):
-        c.post(f"/admin/users/{user.id}/adjustment", data={"csrf_token": csrf, "quantity": qty, "amount": ""},
-               follow_redirects=False)
+        r = submit(c, csrf, f"/admin/users/{user.id}/adjustment", {"quantity": qty, "amount": ""})
+        assert r.status_code == 303 and "err=" in r.headers["location"], qty  # refused at the entry step
     assert events(db) == []
-    c.post(f"/admin/users/{user.id}/adjustment", data={"csrf_token": csrf, "quantity": "2", "amount": ""},
-           follow_redirects=False)  # positive control: the session and form work
+    submit(c, csrf, f"/admin/users/{user.id}/adjustment", {"quantity": "2", "amount": ""})  # positive control: the session and form work
     assert [(e.type, e.quantity, e.amount_cents) for e in events(db)] == [("adjustment", 2, 100)]
 
 

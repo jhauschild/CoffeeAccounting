@@ -13,7 +13,7 @@ from app.models import (
 from app.services import ledger, sessions
 from app.timeutil import utcnow
 from tests import factories
-from tests.admin_support import fast_hasher, login_as, make_real_admin, new_client  # noqa: F401
+from tests.admin_support import fast_hasher, login_as, make_real_admin, new_client, submit  # noqa: F401
 
 
 @pytest.fixture
@@ -32,8 +32,9 @@ def cc(app, chair):
 
 
 def post(pair, path, **data):
+    """Balance-changing paths (payment, adjustment, reversal, merge) run both steps (entry + confirm)."""
     client, csrf = pair
-    return client.post(path, data={"csrf_token": csrf, **data}, follow_redirects=False)
+    return submit(client, csrf, path, data)
 
 
 def actions():

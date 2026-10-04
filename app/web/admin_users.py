@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import date
 
@@ -10,19 +9,17 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from starlette.responses import Response
 
 from app.db import read_session, write_session
-from app.models import NOTE_MAX, ConsumptionEvent
-from app.money import format_amount, parse_money
+from app.models import NOTE_MAX
+from app.money import format_amount
 from app.services import authz, exports, ledger, sessions, stats, users
 from app.services import audit
-from app.services.errors import InvalidAmount, InvalidInput, NotFound, ServiceError
-from app.services.users import effective_user_id
+from app.services.errors import InvalidInput, NotFound, ServiceError
 from app.web import admin_deps as ad
 from app.web.deps import Redirect, client_ip, parse_uuid
 from app.web.middleware import no_store
 
 router = APIRouter()
 
-_INT_RE = re.compile(r"^[+-]?[0-9]{1,4}$")
 
 
 def _optional_uuid(value: str | None) -> uuid.UUID | None:
@@ -155,16 +152,14 @@ def _act(request: Request, uid: uuid.UUID, ctx: ad.AdminContext, action, *, ok: 
     return ad.back(target, msg=ok)
 
 
+# The four balance-changing actions are two-step (app/services/stepup.py): these routes only PREVIEW (they
+# write nothing) and render the confirm page; `POST /admin/stepup/confirm` (admin_stepup.py) executes.
 @router.post("/users/{user_id}/payment", dependencies=[Depends(ad.require_admin_csrf)])
 def record_payment(request: Request, amount: str = Form("", max_length=20), note: str = Form("", max_length=NOTE_MAX),
                    correction_of: str = Form("", max_length=40), uid: uuid.UUID = Depends(ad.admin_user_access),
                    ctx: ad.AdminContext = Depends(ad.require_admin)):
-    def run(db):
-        cents = parse_money(amount, allow_negative=True, allow_zero=False)
-        ledger.add_payment(db, admin=ctx.admin, user_id=uid, amount_cents=cents, note=note or None,
-                           correction_of_id=_optional_uuid(correction_of), ip=client_ip(request))
-
-    return _act(request, uid, ctx, run, ok="payment_recorded")
+    return ad.preview(request, ctx, "payment", {"user_id": str(uid), "amount": amount, "note": note,
+                                                "correction_of": correction_of}, error_path=_detail_path(uid))
 
 
 @router.post("/users/{user_id}/adjustment", dependencies=[Depends(ad.require_admin_csrf)])
@@ -172,16 +167,9 @@ def record_adjustment(request: Request, quantity: str = Form("", max_length=8),
                       amount: str = Form("", max_length=20), note: str = Form("", max_length=NOTE_MAX),
                       uid: uuid.UUID = Depends(ad.admin_user_access),
                       ctx: ad.AdminContext = Depends(ad.require_admin)):
-    def run(db):
-        if not _INT_RE.match(quantity.strip()):
-            raise InvalidAmount("quantity must be a whole number")
-        qty = int(quantity)
-        # An empty amount means "quantity x current price"; anything else is an explicit override.
-        cents = parse_money(amount, allow_negative=True, allow_zero=True) if amount.strip() else None
-        ledger.add_adjustment(db, admin=ctx.admin, user_id=uid, quantity=qty, amount_cents=cents,
-                              note=note or None, ip=client_ip(request))
-
-    return _act(request, uid, ctx, run, ok="adjustment_recorded")
+    # An empty amount means "quantity x current price" (fixed in the confirm payload); anything else overrides.
+    return ad.preview(request, ctx, "adjustment", {"user_id": str(uid), "quantity": quantity, "amount": amount,
+                                                   "note": note}, error_path=_detail_path(uid))
 
 
 @router.post("/users/{user_id}/events/{event_id}/reverse", dependencies=[Depends(ad.require_admin_csrf)])
@@ -190,14 +178,8 @@ def reverse_event(request: Request, event_id: str, note: str = Form("", max_leng
     eid = parse_uuid(event_id)
     if eid is None:
         raise NotFound("event not found")
-
-    def run(db):
-        event = db.get(ConsumptionEvent, eid)
-        if event is None or effective_user_id(db, event.user_id) != uid:
-            raise NotFound("event not found")  # the event must belong to the profile in the URL
-        ledger.admin_reverse_event(db, admin=ctx.admin, event_id=eid, note=note or None, ip=client_ip(request))
-
-    return _act(request, uid, ctx, run, ok="event_reversed")
+    return ad.preview(request, ctx, "reversal", {"user_id": str(uid), "event_id": str(eid), "note": note},
+                      error_path=_detail_path(uid))
 
 
 @router.post("/users/{user_id}/rename", dependencies=[Depends(ad.require_admin_csrf)])
@@ -263,9 +245,5 @@ def merge_submit(request: Request, target_id: str = Form("", max_length=40),
     target = parse_uuid(target_id)
     if target is None:
         return ad.back(f"/admin/users/{uid}/merge", err="invalid_input")
-    try:
-        with write_session() as db:
-            users.merge_users(db, admin=ctx.admin, duplicate_id=uid, target_id=target, ip=client_ip(request))
-    except ServiceError as exc:
-        return ad.back(f"/admin/users/{uid}/merge", err=ad.error_key(exc))
-    return ad.back(_detail_path(target), msg="merged")
+    return ad.preview(request, ctx, "merge", {"user_id": str(uid), "target_id": str(target)},
+                      error_path=f"/admin/users/{uid}/merge")

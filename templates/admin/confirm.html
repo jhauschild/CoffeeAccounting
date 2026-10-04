@@ -1,0 +1,35 @@
+{% extends "admin/base.html" %}
+{% from "admin/_macros.html" import bal %}
+{% block admin_title %}{{ t("admin.stepup.title") }}{% endblock %}
+{% block admin_content %}
+<section class="card narrow">
+  <h1>{{ t("admin.stepup.title") }}</h1>
+  <p class="muted">{{ t("admin.stepup.intro") }}</p>
+  <dl class="totals confirm-summary">
+    <dt>{{ t("admin.stepup.action") }}</dt><dd>{{ t(view.label) }}</dd>
+    <dt>{{ t("admin.stepup.person") }}</dt><dd>{{ view.person }} <span class="muted">({{ view.chair }})</span></dd>
+    {% if view.extra.into %}<dt>{{ t("admin.stepup.into") }}</dt><dd>{{ view.extra.into }}</dd>{% endif %}
+    {% if view.quantity is not none %}<dt>{{ t("admin.csv.quantity") }}</dt><dd>{{ view.quantity }}</dd>{% endif %}
+    <dt>{{ t("admin.stepup.amount") }}</dt><dd>{{ bal(view.amount_cents) }}</dd>
+    {% if view.note %}<dt>{{ t("admin.csv.note") }}</dt><dd>{{ view.note }}</dd>{% endif %}
+    <dt>{{ t("admin.stepup.balance_before") }}</dt><dd>{{ bal(view.balance_before_cents) }}</dd>
+    <dt>{{ t("admin.stepup.balance_after") }}</dt><dd><strong>{{ bal(view.balance_after_cents) }}</strong></dd>
+  </dl>
+  <p class="muted">{{ t("admin.balance_hint") }}</p>
+  {% if error %}<p class="notice notice-error card" role="alert">{{ t("admin.stepup.err." ~ error) }}</p>{% endif %}
+  <form method="post" action="/admin/stepup/confirm" class="stack" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="payload" value="{{ payload }}">
+    <input type="hidden" name="nonce" value="{{ nonce }}">
+    {% if needs_code %}
+    <div class="field">
+      <label for="code">{{ t("admin.stepup.code") }}</label>
+      <input id="code" name="code" type="text" inputmode="text" maxlength="32" autocomplete="one-time-code" required autofocus>
+      <p class="muted">{{ t("admin.stepup.code_hint", minutes=(settings.stepup_window_seconds // 60)) }}</p>
+    </div>
+    {% endif %}
+    <button type="submit" class="button-block">{{ t("admin.stepup.confirm") }}</button>
+  </form>
+  <p><a class="button button-secondary button-block" href="{{ view.back_path }}">{{ t("admin.stepup.cancel") }}</a></p>
+</section>
+{% endblock %}

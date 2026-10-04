@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from app.web import admin_deps as ad
-from app.web import admin_login, admin_manage, admin_users
+from app.web import admin_login, admin_manage, admin_stepup, admin_users
 from tests import factories
 from tests.admin_support import fast_hasher, login_as, make_real_admin, new_client  # noqa: F401
 
@@ -22,7 +22,7 @@ def _calls(dependant):
 
 def collect_routes():
     found = []
-    for module in (admin_login, admin_users, admin_manage):
+    for module in (admin_login, admin_users, admin_stepup, admin_manage):
         for route in module.router.routes:
             for method in route.methods - {"HEAD", "OPTIONS"}:
                 found.append((method, "/admin" + route.path, set(_calls(route.dependant))))
@@ -66,7 +66,10 @@ POST_DATA = {
     "/admin/chairs/{chair_id}/active": {"active": "1"},
     "/admin/prices": {"price": "0.60"},
     "/admin/qr": {"line": "hello"},
+    "/admin/stepup/confirm": {"payload": "not-a-payload", "nonce": "x"},
 }
+
+CONFIRM = "/admin/stepup/confirm"
 
 
 def test_every_admin_route_has_a_policy_and_csrf_on_posts():
@@ -78,6 +81,56 @@ def test_every_admin_route_has_a_policy_and_csrf_on_posts():
             assert path in POST_DATA, f"add form data for {path} to POST_DATA"
         if method == "POST" and (method, path) in PUBLIC:
             assert ad.verify_login_csrf in calls
+
+
+# POST routes that do NOT change a balance. Everything else must declare `require_stepup`. Adding a POST route
+# here is a deliberate statement that it books no money: a new balance-changing route that is not listed
+# fails `test_every_post_route_is_allow_listed_or_requires_stepup`.
+NON_BALANCE_POSTS = {
+    "/admin/login", "/admin/logout", "/admin/totp/setup",             # authentication, TOTP enrolment
+    "/admin/account/password", "/admin/account/sessions/revoke",       # password change, own sessions
+    "/admin/users/{user_id}/rename", "/admin/users/{user_id}/chair", "/admin/users/{user_id}/status",
+    "/admin/users/{user_id}/sessions/revoke",                           # profile, chair change, deactivation
+    "/admin/chairs", "/admin/chairs/{chair_id}/rename", "/admin/chairs/{chair_id}/active",
+    "/admin/prices", "/admin/qr",                                       # chairs, price change, QR preview
+}
+# Entry forms of the step-up actions: they only PREVIEW (a rolled-back dry run) and render the confirm page.
+PREVIEW_POSTS = {
+    "/admin/users/{user_id}/payment", "/admin/users/{user_id}/adjustment",
+    "/admin/users/{user_id}/events/{event_id}/reverse", "/admin/users/{user_id}/merge",
+}
+STEPUP_POSTS = {"/admin/stepup/confirm"}
+# Role assignment (task 4.3) is not built yet; it will be added to NON_BALANCE_POSTS then.
+
+
+def test_every_post_route_is_allow_listed_or_requires_stepup():
+    post_paths = {p for m, p, _ in ROUTES if m == "POST"}
+    assert NON_BALANCE_POSTS | PREVIEW_POSTS | STEPUP_POSTS == post_paths, \
+        "a POST route is neither allow-listed as non-balance nor declares require_stepup"
+    for method, path, calls in ROUTES:
+        if method != "POST":
+            continue
+        if path in NON_BALANCE_POSTS or path in PREVIEW_POSTS:
+            assert ad.require_stepup not in calls, path
+        else:
+            assert ad.require_stepup in calls, f"{path} changes balances and must depend on require_stepup"
+            assert ad.require_admin_csrf in calls, path
+    assert not (NON_BALANCE_POSTS & PREVIEW_POSTS) and not (NON_BALANCE_POSTS & STEPUP_POSTS)
+
+
+def test_balance_services_are_only_called_from_the_step_up_registry():
+    """No /admin route module may call a balance-changing service function directly: the only executor is
+    app/services/stepup.py behind `require_stepup`."""
+    import re
+    from pathlib import Path
+    from app.services import stepup
+    names = "|".join(("add_payment", "add_adjustment", "admin_reverse_event", "merge_users", "set_balance",
+                      "record_remittance"))
+    pattern = re.compile(rf"\b(?:{names})\s*\(")
+    web = Path(__file__).resolve().parent.parent / "app" / "web"
+    offenders = [f.name for f in sorted(web.glob("*.py")) if pattern.search(f.read_text())]
+    assert offenders == [], f"balance-changing service calls outside the step-up registry: {offenders}"
+    assert set(stepup.REGISTRY) >= {"payment", "adjustment", "reversal", "merge"}
 
 
 def test_route_list_matches_the_real_app(app):
@@ -156,6 +209,9 @@ def test_scope_and_role_enforced(method, path, calls, world, principals):
     for name in ("out_of_scope", "in_scope", "global"):  # the mutating principals last
         client, csrf = principals[name]
         r = call(client, method, path, world, csrf=csrf)
+        if path == CONFIRM:  # authorised admins reach the step-up check, which rejects the bogus payload
+            assert r.status_code == 400 and "stepup" not in r.headers.get("location", ""), (name, r.status_code)
+            continue
         if name in allowed:
             assert r.status_code in (200, 303), (name, r.status_code, r.text[:200])
             assert r.headers.get("location") != "/admin/login", name
