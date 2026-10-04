@@ -7,6 +7,7 @@ single clean line. Links are built from `PUBLIC_BASE_URL`; the token is percent-
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
 
 from app.config import get_settings
@@ -24,8 +25,18 @@ def _link(path: str, token: str) -> str:
     return f"{_base()}/{path}/{quote(token, safe='')}"
 
 
+_URL_RE = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//\S*|\bwww\.\S*", re.IGNORECASE)
+
+
+def neutralise_urls(text: str) -> str:
+    """Remove URL-looking text (anything with `://`, `//host` or `www.`) and collapse whitespace. Display names
+    are free text; a link in one must never read as part of the mail."""
+    text = _URL_RE.sub(" ", text or "")
+    return " ".join(text.replace("://", " ").split())
+
+
 def _name(text: str) -> str:
-    return clean_header_text(text, MAX_NAME_IN_BODY)
+    return neutralise_urls(clean_header_text(text, MAX_NAME_IN_BODY))
 
 
 def duration_text(*, minutes: int | None = None, hours: int | None = None, days: int | None = None) -> str:

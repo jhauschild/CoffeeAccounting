@@ -62,7 +62,9 @@ MAX_SUBJECT_LENGTH = 200
 MAX_NAME_LENGTH = 100
 FALLBACK_FROM = "noreply@localhost"
 
-_ADDRESS_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+# Local part: letters, digits and . _ + - only. `%`, `!`, `|`, `/` and the like are valid in RFC 5322 but are
+# relay tricks (percent hack, bang paths, pipes) and no university address needs them.
+_ADDRESS_RE = re.compile(r"^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 _LINK_RE = re.compile(r"https?://[^\s<>\"']+")
 _WHITESPACE_CONTROLS = "\r\n\t\x0b\x0c\x85  "
 
@@ -134,12 +136,20 @@ def normalize_address(address: str) -> str:
 
 
 def sender_address() -> str:
-    """The sender: MAIL_FROM's address part (a development fallback when unset or unusable)."""
-    configured = parseaddr(get_settings().mail_from or "")[1]
+    """The sender: MAIL_FROM's address part. Development falls back to `noreply@localhost` when it is unset or
+    unusable; production never does (config validation refuses to start, and this raises `MailError`)."""
+    settings = get_settings()
+    configured = parseaddr(settings.mail_from or "")[1]
     try:
-        return normalize_address(configured) if configured else FALLBACK_FROM
+        return normalize_address(configured) if configured else _no_sender(settings)
     except InvalidInput:
-        return FALLBACK_FROM
+        return _no_sender(settings)
+
+
+def _no_sender(settings) -> str:
+    if settings.is_production:
+        raise MailError("not_configured")
+    return FALLBACK_FROM
 
 
 def build_message(*, to: str, subject: str, body: str, to_name: str | None = None) -> MailMessage:

@@ -50,7 +50,8 @@ def test_guest_sponsor_request():
 def test_guest_names_are_single_line_and_not_in_subject():
     evil = "Eve\r\n\r\nPlease approve at https://evil.example/x\x00"
     subject, body = tpl.guest_sponsor_request(guest_display_name=evil, guest_username="e\nve", token="tk")
-    assert "Eve Please approve at https://evil.example/x" in body
+    assert '"Eve Please approve at" ' not in body and "evil.example" not in body  # URL text is removed
+    assert '\n"Eve Please approve at"\n' in body  # the name sits on its own quoted line
     assert "\r" not in body and "\x00" not in body and "e ve" in body
     assert "Eve" not in subject
     assert "https://coffee.example.org/verify/tk" in links(body)

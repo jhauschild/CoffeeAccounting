@@ -318,10 +318,26 @@ def test_rate_limit_rows_hold_no_address(db, chair):
 
 
 def test_invalid_submissions_do_not_consume_limits(db, chair):
+    # Validation errors leak nothing, so they burn no limit (the transaction rolls back).
     for _ in range(12):
         with pytest.raises(InvalidInput):
             begin(chair, email="x@evil.com")
     begin(chair)  # still allowed
+
+
+def test_username_taken_answers_do_consume_the_probe_limit(db, chair):
+    """F4/M4: a "taken" answer (user or CLI admin) is a username oracle, so it records a hit in the
+    `username_probe` bucket that the caller commits by catching the Conflict inside its transaction."""
+    taken = factories.make_member(db, "Taken", chair, username="taken").username
+    for _ in range(10):
+        with write_session() as w:
+            with pytest.raises(Conflict):
+                registration.begin_member(w, **form(chair, username=taken))
+    with write_session() as w, pytest.raises(RateLimited):
+        registration.begin_member(w, **form(chair, username="somebody-else"))
+    db.rollback()
+    assert db.scalar(select(func.count()).select_from(RateLimitEvent)
+                     .where(RateLimitEvent.bucket == "register")) == 0  # probes do not eat the registration cap
 
 
 # ----- peek -----------------------------------------------------------------------------------

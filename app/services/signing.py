@@ -2,7 +2,7 @@
 registration tokens, CSRF tokens).
 
 Format: ``base64url(json payload) "." base64url(hmac)``. Every token has a *purpose*; the
-HMAC key is derived from ``SECRET_KEY`` and the purpose (plus optional extra key material),
+HMAC key is derived with HKDF (``keys.derive_key``, label ``signing:<purpose>:<extra>``) from ``SECRET_KEY``,
 so a token minted for one purpose never verifies for another. The payload always carries
 ``iat`` (issued-at, integer UNIX seconds). Verification uses a constant-time comparison.
 """
@@ -15,7 +15,7 @@ import hmac
 import json
 from datetime import datetime
 
-from app.config import get_settings
+from app.services import keys
 from app.timeutil import utcnow
 
 # Tokens issued slightly "in the future" (clock skew between workers) are tolerated.
@@ -32,8 +32,8 @@ def _b64d(text: str) -> bytes:
 
 
 def _key(purpose: str, extra: str = "") -> bytes:
-    secret = get_settings().secret_key.encode("utf-8")
-    return hmac.new(secret, f"coffee-ledger:{purpose}:{extra}".encode("utf-8"), hashlib.sha256).digest()
+    """HKDF key (`keys.derive_key`) with its own label per purpose (and extra key material)."""
+    return keys.derive_key(f"signing:{purpose}:{extra}")
 
 
 def mac(purpose: str, message: str, extra: str = "") -> str:

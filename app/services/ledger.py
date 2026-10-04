@@ -413,8 +413,10 @@ def add_payment(
     `kind="cash"` (default): the recording admin is the collector (`collector_admin_id`).
     `kind="bookkeeping"` (head admin only, normally via `set_balance`): no collector, never
     counted as collected. With `correction_of_id` the new event corrects an earlier payment of
-    the same (effective) user and COPIES kind and `collector_admin_id` from it, whoever records
-    the correction; each payment can be corrected at most once.
+    the same (effective) user and COPIES kind, `collector_admin_id` and `chair_id` from it, whoever
+    records the correction; each payment can be corrected at most once. A correction may be
+    recorded only by the original's collector or a head admin (`Forbidden`), must have the
+    opposite sign and `abs(amount) <= abs(original)` (`InvalidAmount`).
 
     Idempotent on `idempotency_key`: if a payment with this key exists it is returned and
     nothing is inserted (a key reused for a different user or amount raises `Conflict`).
@@ -434,6 +436,7 @@ def add_payment(
         if existing is not None:
             return _same_payment_or_conflict(db, existing, user.id, amount_cents)
     collector_id: uuid.UUID | None = admin.id if kind == "cash" else None
+    correction_chair_id = None
     if correction_of_id is not None:
         original = db.get(PaymentEvent, correction_of_id)
         if original is None:
@@ -445,9 +448,16 @@ def add_payment(
         kind, collector_id = original.kind, original.collector_admin_id
         if kind == "bookkeeping":
             require_global(admin)
+        if admin.role != "global" and admin.id != original.collector_admin_id:
+            raise Forbidden("only the admin who collected a payment or a head admin may correct it")
+        if (amount_cents > 0) == (original.amount_cents > 0):
+            raise InvalidAmount("a correction must have the opposite sign of the payment it corrects")
+        if abs(amount_cents) > abs(original.amount_cents):
+            raise InvalidAmount("a correction may not exceed the payment it corrects")
+        correction_chair_id = original.chair_id
     payment = PaymentEvent(
         user_id=user.id,
-        chair_id=user.chair_id,
+        chair_id=correction_chair_id if correction_of_id is not None else user.chair_id,
         amount_cents=amount_cents,
         admin_id=admin.id,
         correction_of_id=correction_of_id,

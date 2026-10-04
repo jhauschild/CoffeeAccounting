@@ -195,7 +195,7 @@ STRINGS: dict[str, str] = {
     "admin.qr.title": "QR codes",
     "admin.qr.only_urls": "The codes contain only these two addresses (from PUBLIC_BASE_URL).",
     "admin.qr.line": "Extra line for the printout (optional)",
-    "admin.qr.line_hint": "For example the access code. It is printed but never stored.",
+    "admin.qr.line_hint": "For example a note for the printout. It is printed but never stored.",
     "admin.qr.update": "Update preview",
     "admin.qr.download": "Download {label} (SVG)",
     "admin.qr.print": "Print",

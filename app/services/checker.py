@@ -210,6 +210,16 @@ def check_ledger(db: Session) -> CheckReport:
                 bad("correction_collector", f"{ref} has a different collector than corrected payment {target.id}")
             if p.kind != target.kind:
                 bad("correction_kind", f"{ref} has a different kind than corrected payment {target.id}")
+            if p.chair_id != target.chair_id:
+                bad("correction_chair", f"{ref} has a different chair than corrected payment {target.id}")
+            if (p.amount_cents > 0) == (target.amount_cents > 0):
+                bad("correction_sign", f"{ref} has the same sign as corrected payment {target.id}")
+            if abs(p.amount_cents) > abs(target.amount_cents):
+                bad("correction_amount", f"{ref} exceeds corrected payment {target.id}")
+            recorder = admins.get(p.admin_id)
+            if p.admin_id != target.collector_admin_id and (recorder is None or recorder.role != "global"):
+                bad("correction_recorder",
+                    f"{ref} was recorded by neither the collector nor a head admin of payment {target.id}")
 
     # group remittances (v2)
     remittances = list(db.scalars(select(GroupRemittance)))

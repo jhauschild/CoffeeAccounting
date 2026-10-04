@@ -37,8 +37,17 @@ coffee.example.org {
 		health_interval 30s
 	}
 
+	# One-time tokens travel in the path of /verify/<token> and /reset/<token> (and in the Referer of the
+	# page's own static requests): keep them out of the proxy log. The application redacts them in its own
+	# log as well and runs uvicorn with --no-access-log.
 	log {
 		output stdout
-		format console
+		format filter {
+			wrap console
+			fields {
+				request>uri regexp "^(/(?:verify|reset)/)[^?]*" "${1}<redacted>"
+				request>headers>Referer regexp "^(https?://[^/]+/(?:verify|reset)/).*" "${1}<redacted>"
+			}
+		}
 	}
 }

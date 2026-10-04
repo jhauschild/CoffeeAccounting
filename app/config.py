@@ -246,12 +246,28 @@ class Settings(BaseSettings):
                 errors.append("SMTP_HOST must be set in production")
             if (self.smtp_security, self.smtp_port) in (("ssl", 587), ("starttls", 465)):
                 errors.append("SMTP_SECURITY and SMTP_PORT do not match (ssl uses 465, starttls uses 587)")
-            mail_from = self.mail_from.strip()
-            if not mail_from or "@" not in mail_from:
-                errors.append("MAIL_FROM must be set to a sender address in production")
+            if not _valid_sender(self.mail_from):
+                errors.append("MAIL_FROM must be set to a real sender address such as "
+                              "'Coffee Ledger <coffee@example.org>' in production")
             if self.password_min_length < 8:
                 errors.append("PASSWORD_MIN_LENGTH must be at least 8 in production")
         return errors
+
+
+def _valid_sender(mail_from: str) -> bool:
+    """A plain address (optionally with a display name) whose domain has a dot and is not localhost."""
+    from email.utils import parseaddr
+
+    from app.services.mail import normalize_address
+    from app.services.errors import InvalidInput
+
+    address = parseaddr((mail_from or "").strip())[1]
+    try:
+        address = normalize_address(address)
+    except InvalidInput:
+        return False
+    domain = address.rsplit("@", 1)[1]
+    return "." in domain and domain != "localhost" and not domain.endswith(".localhost")
 
 
 @lru_cache
