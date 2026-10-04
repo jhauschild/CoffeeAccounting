@@ -1,0 +1,1 @@
+{% macro balance(label) %}<span class="balance balance-{{ label[0] }}">{{ t("site.balance." ~ label[0], amount=label[1]|money) }}</span>{% endmacro %}

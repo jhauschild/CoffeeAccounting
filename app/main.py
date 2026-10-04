@@ -22,7 +22,7 @@ from starlette.responses import PlainTextResponse, Response
 from app.config import Settings, get_settings
 from app.services.errors import ServiceError
 from app.strings import has, t
-from app.web import health, routes_admin, routes_user
+from app.web import health, routes_admin, routes_overview, routes_user
 from app.web.accesslog import AccessLogMiddleware, redact_path
 from app.web.deps import CSRFError, Redirect
 from app.web.middleware import SecurityMiddleware
@@ -115,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
     app.include_router(health.router)
     app.include_router(routes_user.router)
+    app.include_router(routes_overview.router)
     app.include_router(routes_admin.router)
     _install_error_handlers(app)
     return app

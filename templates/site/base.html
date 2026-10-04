@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block head_extra %}<link rel="stylesheet" href="/static/site.css">{% endblock %}
+{% block body_class %}site-page{% endblock %}
+{% block content %}
+<nav class="site-nav" aria-label="{{ t('site.nav.label') }}">
+  <ul>
+  {% for key, href in nav_items %}
+    <li><a href="{{ href }}"{% if key == nav_current %} aria-current="page" class="is-current"{% endif %}>{{ t("site.nav." ~ key) }}</a></li>
+  {% endfor %}
+  </ul>
+</nav>
+{% block site_content %}{% endblock %}
+{% endblock %}

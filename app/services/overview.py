@@ -331,6 +331,11 @@ def site_totals(db: Session, now: datetime | None = None) -> SiteTotals:
     )
 
 
+def chair_choices(db: Session, now: datetime | None = None) -> tuple[tuple[uuid.UUID, str], ...]:
+    """`(chair_id, short name)` of every chair listed on the site (the chair filter's options), by name."""
+    return tuple((c.chair_id, c.name) for c in _chair_summaries(db, _now(now)))
+
+
 # ----- people -------------------------------------------------------------------------------
 def people(
     db: Session, *, query: str | None = None, chair_id: uuid.UUID | None = None, sort: str = "name",

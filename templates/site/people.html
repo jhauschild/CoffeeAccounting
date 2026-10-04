@@ -1,0 +1,75 @@
+{% extends "site/base.html" %}
+{% from "site/_macros.html" import balance %}
+{% block title %}{{ t("site.people.title") }} – {{ settings.app_title }}{% endblock %}
+{% block site_content %}
+<h1>{{ t("site.people.title") }}</h1>
+
+<form class="card people-filter" method="get" action="/overview/people">
+  <div class="field">
+    <label for="q">{{ t("site.people.search") }}</label>
+    <input type="search" id="q" name="q" value="{{ q }}" maxlength="{{ q_max }}" autocomplete="off" aria-describedby="q-hint">
+    <p class="muted" id="q-hint">{{ t("site.people.search_hint") }}</p>
+  </div>
+  <div class="filter-row">
+    <div class="field">
+      <label for="chair">{{ t("site.people.chair") }}</label>
+      <select id="chair" name="chair">
+        <option value="">{{ t("site.people.all_chairs") }}</option>
+        {% for cid, cname in chair_options %}
+        <option value="{{ cid }}"{% if cid|string == chair %} selected{% endif %}>{{ cname }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="sort">{{ t("site.people.sort") }}</label>
+      <select id="sort" name="sort">
+        {% for key in sorts %}
+        <option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ t("site.people.sort_" ~ key) }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="filter-actions">
+    <button type="submit">{{ t("site.people.apply") }}</button>
+    <a class="button button-secondary" href="/overview/people">{{ t("site.people.reset") }}</a>
+  </div>
+</form>
+
+<p class="muted" role="status">{% if total == 1 %}{{ t("site.people.count_one") }}{% else %}{{ t("site.people.count", count=total) }}{% endif %}</p>
+
+{% if rows %}
+<div class="table-wrap"><table class="people">
+  <thead><tr>
+    {% for key, label in columns %}
+    {% if key %}
+    <th scope="col"{% if key == sort %} aria-sort="{{ 'ascending' if key == 'name' else 'descending' }}"{% endif %}{% if key in ('shots_month', 'shots_total') %} class="num"{% endif %}><a href="{{ sort_links[key] }}">{{ t(label) }}</a></th>
+    {% else %}
+    <th scope="col">{{ t(label) }}</th>
+    {% endif %}
+    {% endfor %}
+  </tr></thead>
+  <tbody>
+  {% for p in rows %}
+    <tr{% if p.inactive %} class="is-inactive"{% endif %}>
+      <th scope="row"><a href="/overview/people/{{ p.id }}">{{ p.name }}</a>{% if p.inactive %} <span class="badge">{{ t("site.inactive") }}</span>{% endif %}</th>
+      <td>{{ p.chair }}</td>
+      <td class="num">{{ p.shots_month }}</td>
+      <td class="num">{{ p.shots_total }}</td>
+      <td>{{ balance(p.label) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<p class="card muted">{{ t("site.people.empty") }}</p>
+{% endif %}
+
+{% if pages > 1 %}
+<nav class="pager" aria-label="{{ t('site.people.pager') }}">
+  {% if prev_link %}<a class="button button-secondary" rel="prev" href="{{ prev_link }}">{{ t("site.people.prev") }}</a>{% else %}<span></span>{% endif %}
+  <span class="muted">{{ t("site.people.page", page=page, pages=pages) }}</span>
+  {% if next_link %}<a class="button button-secondary" rel="next" href="{{ next_link }}">{{ t("site.people.next") }}</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
+<p class="muted">{{ t("site.people.inactive_hint") }}</p>
+{% endblock %}
