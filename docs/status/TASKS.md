@@ -15,10 +15,10 @@ Status: todo | doing | done | blocked. Tier: H strongest model, L cheaper model.
 | 1.4 | groups.py, remittances, check-ledger additions | H | 1.3 | done | groups.py, remittances, checker additions; 43 tests |
 | 1.5 | authz by own chair, overview.py | L | 1.3 | done | authz own chair, overview.py; 26 tests |
 | 2.1 | Mailer interface, memory and file backends, caps | L | 1.2 | done | mail.py backends, caps, templates; 56 tests |
-| 2.2 | Encrypted credential store, smtp backend, fake-SMTP and credential tests | H | 2.1 | doing | |
-| 2.3 | Member registration and verification | H | 2.1 | doing | |
-| 2.4 | Guest registration, sponsor approval, reassign | H | 2.3 | todo | |
-| 2.5 | Login, forgot/reset, limits, pending-action change, gate removal | H | 2.3 | todo | |
+| 2.2 | Encrypted credential store, smtp backend, fake-SMTP and credential tests | H | 2.1 | done | encrypted credential store, verified-TLS SMTP, protocol tests; 58 tests |
+| 2.3 | Member registration and verification | H | 2.1 | done | member registration services; 85 tests |
+| 2.4 | Guest registration, sponsor approval, reassign | H | 2.3 | doing | |
+| 2.5 | Login, forgot/reset, limits, pending-action change, gate removal | H | 2.3 | doing | |
 | 3.1 | User pages and strings for 2.3-2.5 | L | 2.5 | todo | |
 | 3.2 | Scan result page, account page | L | 1.3 | todo | |
 | 4.1 | Admin login for group admins, TOTP enrolment | H | 1.1 | done | v2 admin login, TOTP enrolment, stepup_until; suite green |
