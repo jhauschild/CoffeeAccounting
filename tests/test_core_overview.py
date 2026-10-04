@@ -411,3 +411,25 @@ def test_sentinel_nothing_sensitive_in_any_overview_value(db, chair, other_chair
     assert seen > 30
     row = overview.people(db, now=NOW).rows[0]
     assert not hasattr(row, "email") and not hasattr(row, "username")
+
+
+# ----- can_edit_balance (task 5.2) --------------------------------------------------------------
+def test_can_edit_balance_rules(db, price50, chair, other_chair, global_admin):
+    ga = f.make_admin(db, role="chair", chairs=[chair])
+    mine = f.make_member(db, "Mine", chair)
+    foreign = f.make_member(db, "Foreign", other_chair)
+    plain = f.make_member(db, "Plain", chair)
+    hist = {u.id: overview.person_history(db, u.id, now=NOW) for u in (mine, foreign, plain, ga.user)}
+    assert overview.can_edit_balance(db, ga.user.id, hist[mine.id]) is True
+    assert overview.can_edit_balance(db, ga.user.id, hist[foreign.id]) is False
+    assert overview.can_edit_balance(db, ga.user.id, hist[ga.user.id]) is False  # never on one's own page
+    assert overview.can_edit_balance(db, plain.id, hist[mine.id]) is False  # a plain member
+    assert overview.can_edit_balance(db, plain.id, hist[ga.user.id]) is False
+    ga.active = False
+    db.commit()
+    assert overview.can_edit_balance(db, ga.user.id, hist[mine.id]) is False
+    ga.active = True
+    ga.user.chair_id = other_chair.id  # chair change applies immediately
+    db.commit()
+    assert overview.can_edit_balance(db, ga.user.id, hist[mine.id]) is False
+    assert overview.can_edit_balance(db, ga.user.id, hist[foreign.id]) is True

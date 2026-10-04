@@ -33,3 +33,8 @@ svg.trend .trend-bar { fill: var(--muted); }
 svg.trend .trend-bar.is-current { fill: var(--accent); }
 svg.trend .trend-label { fill: var(--muted); font-size: 9px; }
 details.trend-table summary { cursor: pointer; margin: 0.5rem 0; font-weight: 600; }
+
+table.history th[scope="row"], table.prices th[scope="row"] { font-weight: 600; white-space: nowrap; }
+tr.kind-reversal td, tr.kind-reversal th[scope="row"], tr.kind-reversed td, tr.kind-reversed th[scope="row"],
+tr.kind-payback td, tr.kind-payback th[scope="row"] { color: var(--muted); }
+tr.kind-reversed td:not(.num) { font-style: italic; }
