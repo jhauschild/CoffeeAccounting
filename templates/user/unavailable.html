@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ t("user.unavailable.title") }} – {{ settings.app_title }}{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block content %}
+<section class="card notice notice-warn stack">
+  <h1>{{ t("user.unavailable.title") }}</h1>
+  <p>{{ t("user.unavailable.body") }}</p>
+  <a class="button button-secondary button-block" href="/login">{{ t("user.register.sent_signin") }}</a>
+</section>
+{% endblock %}

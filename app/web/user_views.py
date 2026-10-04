@@ -8,9 +8,10 @@ from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import COFFEE_KINDS, AdminUser, Chair, ConsumptionEvent, PaymentEvent
 from app.money import format_money
-from app.services import chairs, ledger, overview, pending
+from app.services import chairs, ledger, mail_credentials, overview, pending
 from app.services.ledger import Totals
 from app.strings import t
 from app.timeutil import format_local
@@ -118,3 +119,11 @@ def is_group_admin(db: Session, user_id) -> bool:
     """Linked to an ACTIVE group admin row: the chair is fixed (the scope derives from it)."""
     return db.scalar(select(AdminUser.id).where(AdminUser.user_id == user_id, AdminUser.role == "chair",
                                                 AdminUser.active.is_(True))) is not None
+
+
+def mail_unavailable() -> bool:
+    """True when registration and recovery cannot work: the real (smtp) backend without a readable stored mail
+    login. The development backends (memory, console, file) need no login and stay available."""
+    if get_settings().mail_backend != "smtp":
+        return False
+    return not mail_credentials.status().configured

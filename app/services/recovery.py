@@ -43,7 +43,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import AdminUser, PasswordResetToken, User
-from app.services import admin_auth, audit, login, passwords, ratelimit, sessions
+from app.services import admin_auth, audit, login, passwords, ratelimit, registration, sessions
 from app.services.errors import InvalidToken
 from app.services.mail import MailMessage, build_message, recipient_bucket_key
 from app.services.mail_templates import password_reset
@@ -76,18 +76,6 @@ def hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
 
-def _recovery_address(db: Session, user: User) -> str | None:
-    """Where a reset mail for `user` goes: a member's own address, a guest's sponsor's address (the sponsor must
-    be an active member). TODO: swap for `registration.recovery_address` once the guest task provides it."""
-    if user.account_kind == "member":
-        return user.email
-    if user.account_kind == "guest" and user.sponsor_id is not None:
-        sponsor = db.get(User, user.sponsor_id)
-        if sponsor is not None and sponsor.status == "active" and sponsor.account_kind == "member":
-            return sponsor.email
-    return None
-
-
 # ----- request ---------------------------------------------------------------------------------
 def request_reset(db: Session, username: str, ip: str, *, now: datetime | None = None) -> ResetOutcome:
     """Count the request, and, for an account that can sign in and has a recovery address, store a reset token and
@@ -102,7 +90,7 @@ def request_reset(db: Session, username: str, ip: str, *, now: datetime | None =
     user = db.scalar(select(User).where(User.username_normalized == normalized)) if normalized else None
     if not login.can_sign_in(user):
         return ResetOutcome()
-    address = _recovery_address(db, user)
+    address = registration.recovery_address(user, db)
     if not address:
         return ResetOutcome()
     rcpt_bucket, rcpt_limit, rcpt_window = ratelimit.RESET_RECIPIENT

@@ -2,12 +2,43 @@
 {% from "user/_fields.html" import field %}
 {% block title %}{{ t("user.register.title") }} – {{ settings.app_title }}{% endblock %}
 {% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% macro privacy_box(errors) %}
+    <div class="field">
+      <label class="checkbox" for="privacy_ack">
+        <input id="privacy_ack" name="privacy_ack" type="checkbox" value="1" required>
+        <span>{{ t("user.register.privacy") }} <a href="/privacy" target="_blank" rel="noopener">{{ t("user.register.privacy_link") }}</a></span>
+      </label>
+      {% if errors.privacy %}<p class="field-error" role="alert">{{ t(errors.privacy) }}</p>{% endif %}
+    </div>
+{% endmacro %}
 {% block content %}
 {% include "user/_pending.html" %}
 <section class="card">
   <h1>{{ t("user.register.title") }}</h1>
   <p>{{ t("user.register.intro") }}</p>
+  <nav class="choice" aria-label="{{ t('user.register.choose') }}">
+    <a class="button {{ 'is-current' if kind == 'member' else 'button-secondary' }}" href="/register"{% if kind == 'member' %} aria-current="page"{% endif %}>{{ t("user.register.choose_member") }}</a>
+    <a class="button {{ 'is-current' if kind == 'guest' else 'button-secondary' }}" href="/register?kind=guest"{% if kind == 'guest' %} aria-current="page"{% endif %}>{{ t("user.register.choose_guest") }}</a>
+  </nav>
+</section>
+<section class="card">
   {% if errors.form %}<p class="field-error" role="alert">{{ t(errors.form) }}</p>{% endif %}
+  {% if kind == 'guest' %}
+  <h2>{{ t("user.register.guest_title") }}</h2>
+  <p>{{ t("user.register.guest_intro") }}</p>
+  <form method="post" action="/register/guest">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {{ field("username", t("user.register.username"), values.username or "", errors.username, autocomplete="username", hint=t("user.register.username_hint"), maxlength=64) }}
+    {{ field("display_name", t("user.register.name"), values.display_name or "", errors.display_name, autocomplete="name", hint=t("user.register.name_hint"), maxlength=name_max, error_args={"max": name_max}) }}
+    {{ field("password", t("user.register.password"), "", errors.password, type="password", autocomplete="new-password", hint=t("user.register.password_hint", min=min_password_length), maxlength=1000, error_args={"min": min_password_length}) }}
+    {{ field("password2", t("user.register.password2"), "", errors.password2, type="password", autocomplete="new-password", maxlength=1000) }}
+    {{ field("sponsor_email", t("user.register.sponsor_email"), values.sponsor_email or "", errors.sponsor_email, type="email", autocomplete="off", hint=t("user.register.sponsor_hint")) }}
+    {{ privacy_box(errors) }}
+    <button type="submit" class="button-block">{{ t("user.register.guest_submit") }}</button>
+  </form>
+  {% else %}
+  <h2>{{ t("user.register.member_title") }}</h2>
+  <p>{{ t("user.register.member_intro") }}</p>
   <form method="post" action="/register">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {{ field("username", t("user.register.username"), values.username or "", errors.username, autocomplete="username", hint=t("user.register.username_hint"), maxlength=64) }}
@@ -25,15 +56,10 @@
     {{ field("email", t("user.register.email"), values.email or "", errors.email, type="email", autocomplete="email", hint=t("user.register.email_hint")) }}
     {{ field("password", t("user.register.password"), "", errors.password, type="password", autocomplete="new-password", hint=t("user.register.password_hint", min=min_password_length), maxlength=1000, error_args={"min": min_password_length}) }}
     {{ field("password2", t("user.register.password2"), "", errors.password2, type="password", autocomplete="new-password", maxlength=1000) }}
-    <div class="field">
-      <label class="checkbox" for="privacy_ack">
-        <input id="privacy_ack" name="privacy_ack" type="checkbox" value="1" required>
-        <span>{{ t("user.register.privacy") }} <a href="/privacy" target="_blank" rel="noopener">{{ t("user.register.privacy_link") }}</a></span>
-      </label>
-      {% if errors.privacy %}<p class="field-error" role="alert">{{ t(errors.privacy) }}</p>{% endif %}
-    </div>
+    {{ privacy_box(errors) }}
     <button type="submit" class="button-block">{{ t("user.register.submit") }}</button>
   </form>
+  {% endif %}
   <p>{{ t("user.register.have_account") }} <a href="/login">{{ t("user.login.title") }}</a></p>
 </section>
 {% endblock %}

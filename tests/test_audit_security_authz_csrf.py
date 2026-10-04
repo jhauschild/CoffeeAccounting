@@ -27,6 +27,9 @@ USER_POST_DATA = {
     "/register": {"username": "mallory", "display_name": "Mallory", "chair_id": "{chair_id}",
                   "email": "mallory@tum.de", "password": "a-long-enough-password",
                   "password2": "a-long-enough-password", "privacy_ack": "1"},
+    "/register/guest": {"username": "mallory", "display_name": "Mallory", "sponsor_email": "alice@tum.de",
+                        "password": "a-long-enough-password", "password2": "a-long-enough-password",
+                        "privacy_ack": "1"},
     "/verify/{token}": {},
     "/forgot": {"username": "alice"},
     "/reset/{token}": {"password": "a-long-enough-password", "password2": "a-long-enough-password"},
@@ -35,7 +38,7 @@ USER_POST_DATA = {
                           "password2": "a-long-enough-password"},
     "/logout": {},
 }
-PRE_SESSION_POSTS = ["/login", "/register", "/verify/{token}", "/forgot", "/reset/{token}"]
+PRE_SESSION_POSTS = ["/login", "/register", "/register/guest", "/verify/{token}", "/forgot", "/reset/{token}"]
 
 
 def url(path: str, world: dict) -> str:

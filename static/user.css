@@ -20,3 +20,6 @@ button.button-block { display: flex; }
 .headline-even { color: var(--muted); }
 .card.center .headline { text-align: center; }
 .stack-links { display: flex; flex-direction: column; gap: 0.5rem; }
+.choice { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.choice .button { flex: 1 1 0; text-align: center; justify-content: center; }
+.choice .button.is-current { pointer-events: none; }

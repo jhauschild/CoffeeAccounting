@@ -46,9 +46,14 @@ def _kind(kind: str) -> str:
 
 
 def _message(request: Request, title: str, body: str, *, status: int = 200, tone: str = "warn",
-             link: tuple[str, str] | None = None) -> Response:
-    return render(request, "user/message.html", {"title": title, "body": body, "tone": tone, "link": link},
-                  status_code=status)
+             link: tuple[str, str] | None = None, args: dict | None = None) -> Response:
+    return render(request, "user/message.html",
+                  {"title": title, "body": body, "tone": tone, "link": link, "args": args or {}}, status_code=status)
+
+
+def _unavailable(request: Request) -> Response:
+    """Registration and recovery send mail; without a stored mail login they collect nothing (review L2)."""
+    return render(request, "user/unavailable.html", {}, status_code=503, headers={"Cache-Control": "no-store"})
 
 
 def _rate_limited(request: Request) -> Response:
@@ -205,17 +210,18 @@ def logout(request: Request, ctx: UserContext = Depends(deps.require_user)):
 
 
 # ----- registration and verification ----------------------------------------------------------
-def _register_page(request: Request, *, values: dict, errors: dict | None = None, status: int = 200) -> Response:
+def _register_page(request: Request, *, values: dict, errors: dict | None = None, status: int = 200,
+                   kind: str = "member") -> Response:
     with read_session() as db:  # render inside the block: the chairs expire when the read transaction ends
         return render(request, "user/register.html", {
             "csrf_token": deps.form_csrf_token(request), "chairs": user_views.active_chairs(db), "values": values,
-            "errors": errors or {}, "name_max": DISPLAY_NAME_MAX,
+            "errors": errors or {}, "name_max": DISPLAY_NAME_MAX, "kind": kind,
             "min_password_length": get_settings().password_min_length,
             "pending_notice": user_views.pending_notice(request, db)}, status_code=status)
 
 
-def _register_errors(exc: InvalidInput | Conflict) -> dict[str, str]:
-    """{form field: string key} for a validation error of `registration.begin_member`."""
+def _register_errors(exc: InvalidInput | Conflict, *, guest: bool = False) -> dict[str, str]:
+    """{form field: string key} for a validation error of `registration.begin_member` / `begin_guest`."""
     ctx = exc.context
     if isinstance(exc, InvalidPassword):
         return {"password": f"user.register.error_password_{ctx.get('reason')}"}
@@ -224,6 +230,8 @@ def _register_errors(exc: InvalidInput | Conflict) -> dict[str, str]:
     field = ctx.get("field")
     if field == "username":
         return {"username": f"user.register.error_username_{ctx.get('reason', 'chars')}"}
+    if field == "email" and guest:
+        return {"sponsor_email": f"user.register.error_sponsor_{ctx.get('reason', 'format')}"}
     if field == "email":
         return {"email": f"user.register.error_email_{ctx.get('reason', 'format')}"}
     if field == "display_name":
@@ -236,8 +244,10 @@ def _register_errors(exc: InvalidInput | Conflict) -> dict[str, str]:
 
 
 @router.get("/register")
-def register_page(request: Request):
-    return _register_page(request, values={})
+def register_page(request: Request, kind: str = ""):
+    if user_views.mail_unavailable():
+        return _unavailable(request)
+    return _register_page(request, values={}, kind="guest" if kind == "guest" else "member")
 
 
 @router.post("/register", dependencies=[Depends(deps.require_csrf)])
@@ -247,6 +257,8 @@ def register_submit(request: Request, background_tasks: BackgroundTasks,
                     chair_id: str = Form("", max_length=64), email: str = Form("", max_length=FORM_TEXT_MAX),
                     password: str = Form("", max_length=PASSWORD_FORM_MAX),
                     password2: str = Form("", max_length=PASSWORD_FORM_MAX), privacy_ack: str = Form("")):
+    if user_views.mail_unavailable():  # collect nothing that could not be verified
+        return _unavailable(request)
     values = {"username": username, "display_name": display_name, "chair_id": chair_id[:64], "email": email}
     if password != password2:
         return _register_page(request, values=values, errors={"password2": "user.register.error_password_mismatch"},
@@ -274,6 +286,49 @@ def register_submit(request: Request, background_tasks: BackgroundTasks,
     return render(request, "user/register_sent.html", {})
 
 
+@router.post("/register/guest", dependencies=[Depends(deps.require_csrf)])
+def register_guest_submit(request: Request, background_tasks: BackgroundTasks,
+                          username: str = Form("", max_length=FORM_TEXT_MAX),
+                          display_name: str = Form("", max_length=FORM_TEXT_MAX),
+                          sponsor_email: str = Form("", max_length=FORM_TEXT_MAX),
+                          password: str = Form("", max_length=PASSWORD_FORM_MAX),
+                          password2: str = Form("", max_length=PASSWORD_FORM_MAX), privacy_ack: str = Form("")):
+    """A guest asks a member (by e-mail address) to vouch for them. Whatever the address is (a member, a stranger,
+    a member with too many open requests), the answer is the same neutral page."""
+    if user_views.mail_unavailable():
+        return _unavailable(request)
+    values = {"username": username, "display_name": display_name, "sponsor_email": sponsor_email}
+    if password != password2:
+        return _register_page(request, values=values, errors={"password2": "user.register.error_password_mismatch"},
+                              status=400, kind="guest")
+    taken: Conflict | None = None
+    message = None
+    sponsor_address = None
+    try:
+        with write_session() as db:
+            try:
+                result = registration.begin_guest(
+                    db, username=username, display_name=display_name, password=password,
+                    sponsor_email=sponsor_email, privacy_ack=bool(privacy_ack), ip=deps.client_ip(request))
+                message = registration.mail_for_guest_request(result)
+                sponsor_address = result.sponsor_email
+            except Conflict as exc:
+                if exc.context.get("reason") != registration.REASON_USERNAME_TAKEN:
+                    raise
+                taken = exc  # leave the block normally: the username-probe hit is committed
+    except RateLimited:
+        return _rate_limited(request)
+    except (InvalidInput, Conflict) as exc:
+        return _register_page(request, values=values, errors=_register_errors(exc, guest=True), status=400,
+                              kind="guest")
+    if taken is not None:
+        return _register_page(request, values=values, errors=_register_errors(taken, guest=True), status=400,
+                              kind="guest")
+    if message is not None:
+        background_tasks.add_task(send_in_background, message, sponsor_address)
+    return render(request, "user/register_guest_sent.html", {})
+
+
 @router.get("/verify/{token}")
 def verify_page(request: Request, token: str):
     """Shows what will be created; writes nothing (mail scanners prefetch links)."""
@@ -285,8 +340,36 @@ def verify_page(request: Request, token: str):
                                                 "token": token})
 
 
+def _guest_decision(request: Request, token: str, action: str) -> Response:
+    """The sponsor's Approve / Reject (no login: the link is the capability). Only this POST writes."""
+    ip = deps.client_ip(request)
+    name = username = ""
+    try:
+        with write_session() as db:
+            if action == "approve":
+                guest = registration.approve_guest(db, token, ip=ip)
+                name, username = guest.display_name, guest.username or ""
+            else:
+                registration.reject_guest(db, token, ip=ip)
+    except InvalidToken as exc:
+        if exc.context.get("reason") == "sponsor_inactive":
+            return _message(request, "user.guest.sponsor_inactive_title", "user.guest.sponsor_inactive_body",
+                            status=403)
+        return _invalid_link(request)
+    except Conflict:
+        return _message(request, "user.guest.taken_title", "user.guest.taken_body", status=409)
+    except InvalidInput:
+        return _message(request, "user.guest.failed_title", "user.guest.failed_body", status=400)
+    if action == "approve":
+        return _message(request, "user.guest.approved_title", "user.guest.approved_body", tone="ok",
+                        args={"name": name, "username": username})
+    return _message(request, "user.guest.rejected_title", "user.guest.rejected_body", tone="ok")
+
+
 @router.post("/verify/{token}", dependencies=[Depends(deps.require_csrf)])
-def verify_submit(request: Request, token: str):
+def verify_submit(request: Request, token: str, action: str = Form("", max_length=16)):
+    if action in ("approve", "reject"):
+        return _guest_decision(request, token, action)
     try:
         with write_session() as db:
             result = registration.confirm_member(
@@ -308,12 +391,16 @@ def verify_submit(request: Request, token: str):
 # ----- password recovery ----------------------------------------------------------------------
 @router.get("/forgot")
 def forgot_page(request: Request):
+    if user_views.mail_unavailable():
+        return _unavailable(request)
     return render(request, "user/forgot.html", {"csrf_token": deps.form_csrf_token(request)})
 
 
 @router.post("/forgot", dependencies=[Depends(deps.require_csrf)])
 def forgot_submit(request: Request, background_tasks: BackgroundTasks,
                   username: str = Form("", max_length=FORM_TEXT_MAX)):
+    if user_views.mail_unavailable():
+        return _unavailable(request)
     try:
         with write_session() as db:
             outcome = recovery.request_reset(db, username, deps.client_ip(request))

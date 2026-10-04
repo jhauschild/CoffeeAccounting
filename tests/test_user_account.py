@@ -355,7 +355,7 @@ def test_no_open_redirect_anywhere(client, db, chair, user, price, evil):
 
 
 def test_pages_have_no_inline_script_or_style_and_no_external_assets(client, db, user, price, login, chair):
-    pages = ["/", "/privacy", "/login", "/login?notice=reset", "/register", "/forgot", "/coffee/single"]
+    pages = ["/", "/privacy", "/login", "/login?notice=reset", "/register", "/register?kind=guest", "/forgot", "/coffee/single"]
     for path in pages:
         client.get(path)
     login(user)
@@ -389,6 +389,7 @@ def test_all_string_keys_used_by_templates_and_routes_exist():
                                                          "equals_email_local")}
     used |= {f"user.register.error_username_{r}" for r in ("length", "chars")}
     used |= {f"user.register.error_email_{r}" for r in ("format", "domain")}
+    used |= {f"user.register.error_sponsor_{r}" for r in ("format", "domain")}
     missing = sorted(k for k in used if not strings.has(k))
     assert not missing, missing
     assert len(used) > 60
