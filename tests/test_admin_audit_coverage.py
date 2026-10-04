@@ -11,7 +11,7 @@ from app.db import read_session
 from app.models import AdminUser, AuditLog
 from tests import factories
 from tests.admin_support import (  # noqa: F401
-    CSRF_RE, NEW_PASSWORD, PASSWORD, current_code, fast_hasher, login_as, make_real_admin, new_client, page_csrf,
+    CSRF_RE, NEW_PASSWORD, PASSWORD, current_code, fast_hasher, login_as, make_real_admin, new_client, page_csrf, submit,
 )
 
 REQUIRED = {
@@ -24,7 +24,7 @@ REQUIRED = {
     "chair.created", "chair.renamed", "chair.deactivated", "chair.reactivated", "price.added", "user.chair_changed",
     "user.updated", "user.merged", "user.deactivated", "user.reactivated", "user.sessions_revoked",
     # ledger
-    "payment.recorded", "payment.corrected", "event.adjustment", "event.reversed",
+    "payment.recorded", "payment.corrected", "event.adjustment", "event.reversed", "stepup.executed",
     # exports
     "export.users_csv", "export.ledger_csv",
 }
@@ -58,7 +58,7 @@ def test_every_admin_action_is_audited_without_secrets(app, db, chair, other_cha
     gcsrf = login_as(g, admin_id)
 
     def post(path, **data):
-        return g.post(path, data={"csrf_token": gcsrf, **data}, follow_redirects=False)
+        return submit(g, gcsrf, path, data)
 
     alice = factories.make_user(db, "Alice", chair)
     dup = factories.make_user(db, "Alice 2", chair)

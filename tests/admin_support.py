@@ -91,3 +91,37 @@ def page_csrf(client: TestClient, path: str) -> str:
     m = CSRF_RE.search(html)
     assert m, f"no csrf token on {path}"
     return m.group(1)
+
+
+# ----- step-up (two-step balance changes) ---------------------------------------------------------
+BALANCE_PATH = re.compile(r"^/admin/users/[^/]+/(payment|adjustment|merge|events/[^/]+/reverse)$")
+CONFIRM_PATH = "/admin/stepup/confirm"
+
+
+def confirm_fields(html: str) -> dict:
+    """The hidden fields (csrf_token, payload, nonce) of the confirm form on a confirm page."""
+    out = {}
+    for name in ("csrf_token", "payload", "nonce"):
+        m = re.search(rf'name="{name}" value="([^"]*)"', html)
+        assert m, f"confirm page has no {name} field"
+        out[name] = m.group(1)
+    return out
+
+
+def confirm(client: TestClient, html: str, *, code: str | None = None, **override):
+    """POST the confirm form found in `html` (optionally with a code / overridden fields)."""
+    data = confirm_fields(html)
+    if code is not None:
+        data["code"] = code
+    data.update(override)
+    return client.post(CONFIRM_PATH, data=data, follow_redirects=False)
+
+
+def submit(client: TestClient, csrf: str, path: str, data: dict | None = None, *, code: str | None = None):
+    """POST an admin form. A balance-changing action (payment, adjustment, reversal, merge) goes through
+    both steps: entry form -> confirm page -> confirm POST; the final response is returned (an entry-step
+    error redirect is returned as it is)."""
+    r = client.post(path, data={"csrf_token": csrf, **(data or {})}, follow_redirects=False)
+    if BALANCE_PATH.match(path) and r.status_code == 200 and f'action="{CONFIRM_PATH}"' in r.text:
+        r = confirm(client, r.text, code=code)
+    return r

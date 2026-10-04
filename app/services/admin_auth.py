@@ -353,7 +353,7 @@ def _totp_matches(db: Session, admin: AdminUser, code: str, now: datetime) -> bo
 
 
 def _consume_recovery_code(admin: AdminUser, code: str) -> bool:
-    """Remove a matching single-use recovery code (used by the step-up confirmation, task 4.2)."""
+    """Remove a matching single-use recovery code (used by `open_stepup`; call it on an admin loaded inside the write transaction)."""
     wanted = _recovery_hash(code)
     stored = list(admin.recovery_codes or [])
     for h in stored:
@@ -361,6 +361,48 @@ def _consume_recovery_code(admin: AdminUser, code: str) -> bool:
             admin.recovery_codes = [x for x in stored if x != h]
             return True
     return False
+
+
+def open_stepup(db: Session, *, session_id: uuid.UUID, admin: AdminUser, code: str, ip: str,
+                now: datetime | None = None) -> str:
+    """Open the session's step-up window with a TOTP or recovery code (task 4.2; caller commits).
+
+    Returns `"window"` (it was already open: the code is NOT consumed, the window is not extended),
+    `"totp"` or `"recovery_code"` (code accepted: `stepup_until = now + STEPUP_WINDOW_SECONDS`, fixed),
+    `"invalid"` (wrong code or replay: counted by the admin rate limiter and audited), `"limited"`
+    (rate limit hit; nothing is checked) or `"no_session"`. Must run in a write transaction: the admin
+    row is re-read inside it, so a recovery code can be spent only once even under concurrency
+    (writers are serialized by `BEGIN IMMEDIATE`). The code itself is never logged.
+    """
+    now = _now(now)
+    admin = _attached(db, admin)
+    session = db.get(AdminSession, session_id)
+    if session is None or session.revoked_at is not None or session.admin_id != admin.id \
+            or ensure_utc(session.expires_at) <= now:
+        return "no_session"
+    if has_open_stepup(session, now):
+        return "window"
+    if _limited(db, username=admin.username, ip=ip, step="stepup", admin=admin, now=now):
+        return "limited"
+    normalized = _normalize_code(code)
+    method = "totp" if re.fullmatch(r"[0-9]{6}", normalized) else "recovery_code"
+    if not admin.totp_enabled:
+        ok = False
+    elif method == "totp":
+        ok = _totp_matches(db, admin, normalized, now)
+    else:
+        ok = _consume_recovery_code(admin, normalized)
+    if not ok:
+        _fail(db, username=admin.username, ip=ip, step="stepup", admin=admin, now=now, action="admin.stepup.failed")
+        return "invalid"
+    session.stepup_until = now + timedelta(seconds=get_settings().stepup_window_seconds)
+    db.flush()
+    meta = {"method": method, "window_seconds": get_settings().stepup_window_seconds}
+    if method == "recovery_code":
+        meta["recovery_codes_left"] = len(admin.recovery_codes or [])
+    audit.log(db, actor_type="admin", actor_id=admin.id, action="admin.stepup.opened", target_type="admin",
+              target_id=admin.id, metadata=meta, ip=ip, now=now)
+    return method
 
 
 # ----- login flow -----------------------------------------------------------------------------
@@ -412,12 +454,12 @@ def _limit_checks(username: str, ip: str):
 
 
 def _fail(db: Session, *, username: str, ip: str, step: str, admin: AdminUser | None, now: datetime,
-          record_hits: bool = True) -> LoginOutcome:
+          record_hits: bool = True, action: str = "admin.login.failed") -> LoginOutcome:
     if record_hits:
         for bucket, key, _limit, _window in _limit_checks(username, ip):
             ratelimit.record_hit(db, bucket, key, now)
     audit.log(db, actor_type="admin" if admin else "system", actor_id=admin.id if admin else None,
-              action="admin.login.failed", target_type="admin", target_id=admin.id if admin else None,
+              action=action, target_type="admin", target_id=admin.id if admin else None,
               metadata={"step": step, "username_attempted": (username or "")[:MAX_USERNAME_LENGTH]},
               ip=ip, now=now)
     return LoginOutcome("invalid")
