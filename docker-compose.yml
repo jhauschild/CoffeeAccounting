@@ -1,11 +1,18 @@
 # Production-style deployment: one app service behind a reverse proxy on the host (see deploy/).
 #
-#   cp .env.example .env            # edit: PUBLIC_BASE_URL, SECRET_KEY, ...
+#   cp .env.example .env            # edit: PUBLIC_BASE_URL, SECRET_KEY, MAIL_FROM, ...
 #   docker compose build
-#   docker compose run --rm app alembic upgrade head     # explicit migration step (never implicit)
+#   docker compose run --rm app alembic upgrade head                        # explicit migration step (never implicit)
+#   docker compose run --rm -it app python -m app.cli setup                 # head admin, mail login, first price
 #   docker compose up -d
 #
 # Run exactly one replica: the application requires a single process (see README).
+#
+# Volumes
+#   coffee_data  the SQLite database (/data). The only thing scripts/backup.sh copies.
+#   secrets      the encrypted mail login (/secrets, written by `app.cli setup-mail`). Mounted ONLY into this
+#                container, never into /backups, never part of a backup. The mail login itself is not in this
+#                file, in .env or in the image; changing SECRET_KEY makes it unreadable (re-run setup-mail).
 services:
   app:
     build: .
@@ -18,11 +25,23 @@ services:
       DATABASE_URL: sqlite:////data/coffee.db
       # scripts/backup.sh writes here (the bind mount below).
       BACKUP_DIR: /backups
+      # Mail: production requires the smtp backend. Host, port, security and sender come from .env;
+      # the mail LOGIN is never an environment variable (see `setup-mail` in the README).
+      MAIL_BACKEND: smtp
+      SMTP_HOST: ${SMTP_HOST:-postout.lrz.de}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      MAIL_FROM: ${MAIL_FROM:-}
+      # Where the encrypted mail login lives: the `secrets` volume below.
+      SECRETS_DIR: /secrets
     ports:
       # Only the local reverse proxy may reach the app; never publish 8000 on a public interface.
       - "127.0.0.1:8000:8000"
     volumes:
       - coffee_data:/data
+      # Dedicated volume for the encrypted mail login. Created from the image directory /secrets, which is
+      # mode 0700 and owned by the non-root app user (uid 10001). Do not mount it anywhere else.
+      - secrets:/secrets
       # Backups written by scripts/backup.sh. Create it first and let the container user write to it:
       #   mkdir -p backups && sudo chown 10001 backups
       - ${BACKUP_HOST_DIR:-./backups}:/backups
@@ -33,3 +52,4 @@ services:
 
 volumes:
   coffee_data:
+  secrets:

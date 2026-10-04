@@ -13,6 +13,11 @@
 #
 # Environment: DB_PATH or DATABASE_URL (as for backup.sh), BACKUP_DIR (where pre-restore copies go,
 # default: next to the database).
+#
+# Only the database is restored. The mail login lives in the separate secrets volume and is not in any
+# backup: on a NEW server run `docker compose run --rm -it app python -m app.cli setup-mail` afterwards, and
+# keep SECRET_KEY unchanged (a different SECRET_KEY makes the stored mail login unreadable, and invalidates
+# sessions and links).
 set -euo pipefail
 umask 077
 # shellcheck source=scripts/_common.sh
@@ -51,3 +56,4 @@ rm -f -- "$db-wal" "$db-shm"
 mv "$incoming" "$db"
 dbtool check "$db" >/dev/null || die "restored database failed verification (previous one is in $safety_dir)"
 echo "restored $db from $backup_file; start the application and open /readyz"
+echo "reminder: the mail login is not part of a backup; on a new server run 'python -m app.cli setup-mail'"
