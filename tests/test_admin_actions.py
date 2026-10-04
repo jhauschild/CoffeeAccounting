@@ -78,10 +78,10 @@ def test_payment_correction_and_chair_admin_scope(gc, cc, alice):
     post(gc, f"/admin/users/{alice.id}/payment", amount="10")
     with read_session() as r:
         original_id = r.scalars(select(PaymentEvent)).one().id
-    r = post(cc, f"/admin/users/{alice.id}/payment", amount="-2,50", correction_of=str(original_id), note="oops")
+    r = post(gc, f"/admin/users/{alice.id}/payment", amount="-2,50", correction_of=str(original_id), note="oops")
     assert "msg=payment_recorded" in r.headers["location"]
     assert totals(alice.id).paid_amount_cents == 750
-    again = post(cc, f"/admin/users/{alice.id}/payment", amount="1", correction_of=str(original_id))
+    again = post(gc, f"/admin/users/{alice.id}/payment", amount="-1", correction_of=str(original_id))
     assert "err=conflict" in again.headers["location"]  # each payment is corrected at most once
     assert "payment.corrected" in actions()
     page = cc[0].get(f"/admin/users/{alice.id}").text

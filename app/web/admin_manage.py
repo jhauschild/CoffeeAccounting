@@ -129,7 +129,7 @@ def qr_page(request: Request, ctx: ad.AdminContext = Depends(ad.require_admin)):
 
 @router.post("/qr", dependencies=[Depends(ad.require_admin_csrf)])
 def qr_preview(request: Request, line: str = Form("", max_length=200), ctx: ad.AdminContext = Depends(ad.require_admin)):
-    """Echo the optional free-text line (e.g. an access code) into the printable page. Never stored or logged."""
+    """Echo the optional free-text line (e.g. a short notice) into the printable page. Never stored or logged."""
     return _qr_page(request, ctx, " ".join(line.split()))
 
 

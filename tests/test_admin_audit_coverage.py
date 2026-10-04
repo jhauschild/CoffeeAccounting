@@ -77,7 +77,7 @@ def test_every_admin_action_is_audited_without_secrets(app, db, chair, other_cha
     with read_session() as s:
         from app.models import PaymentEvent
         pid = s.scalars(sel(PaymentEvent)).one().id
-    post(f"/admin/users/{alice.id}/payment", amount="1", correction_of=str(pid))
+    post(f"/admin/users/{alice.id}/payment", amount="-1", correction_of=str(pid))
     post(f"/admin/users/{alice.id}/adjustment", quantity="1", note="x")
     post(f"/admin/users/{alice.id}/events/{events[0].id}/reverse")
     post(f"/admin/users/{alice.id}/status", active="0")
