@@ -1,0 +1,167 @@
+# Quarterly bump of pinned Python deps + python:3.X-slim base image, regenerate
+# requirements.lock, then open a PR.
+#
+# PRs created with the default GITHUB_TOKEN do not start other workflows (container.yml,
+# pip-audit.yml). Set repo secret DEP_BUMP_TOKEN to a PAT (repo + workflow) so checks run
+# on the PR; otherwise reopen the PR or push an empty commit after it opens.
+name: Dependency bump
+
+on:
+  schedule:
+    # 06:17 UTC on 10 Feb / May / Aug / Nov
+    - cron: "17 6 10 2,5,8,11 *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Bump python:3.X-slim base image
+        id: python
+        run: |
+          set -euo pipefail
+          eval "$(python3 <<'PY'
+          import json, re, urllib.request
+
+          tags = []
+          url = "https://hub.docker.com/v2/repositories/library/python/tags?page_size=100&name=-slim"
+          while url:
+              with urllib.request.urlopen(url) as resp:
+                  data = json.load(resp)
+              for row in data["results"]:
+                  name = row["name"]
+                  if re.fullmatch(r"3\.\d+-slim", name):
+                      tags.append(name)
+              url = data.get("next")
+          if not tags:
+              raise SystemExit("no python 3.X-slim tags found on Docker Hub")
+
+          def sort_key(tag: str) -> tuple[int, int]:
+              major, minor = tag.removesuffix("-slim").split(".")
+              return int(major), int(minor)
+
+          latest = max(tags, key=sort_key)
+          version = latest.removesuffix("-slim")
+          print(f"TAG={latest}")
+          print(f"VERSION={version}")
+          PY
+          )"
+          DIGEST="$(docker buildx imagetools inspect "python:${TAG}" --format '{{.Digest}}')"
+          case "$DIGEST" in
+            sha256:*) ;;
+            *) echo "unexpected digest: $DIGEST" >&2; exit 1 ;;
+          esac
+          IMAGE="python:${TAG}@${DIGEST}"
+          python3 - "$IMAGE" "$VERSION" <<'PY'
+          import pathlib, re, sys
+
+          image, version = sys.argv[1], sys.argv[2]
+          root = pathlib.Path(".")
+
+          docker = root / "Dockerfile"
+          text = docker.read_text()
+          text, n = re.subn(
+              r"^FROM python:3\.\d+-slim(?:@sha256:[0-9a-f]{64})?\s*$",
+              f"FROM {image}",
+              text,
+              count=1,
+              flags=re.M,
+          )
+          if n != 1:
+              raise SystemExit("could not update FROM line in Dockerfile")
+          text = re.sub(
+              r"\(3\.\d+\)",
+              f"({version})",
+              text,
+              count=1,
+          )
+          text = re.sub(
+              r"FROM python:3\.\d+-slim@sha256:<digest>",
+              f"FROM python:{version}-slim@sha256:<digest>",
+              text,
+          )
+          docker.write_text(text)
+
+          for path in (root / ".github" / "workflows").glob("*.yml"):
+              body = path.read_text()
+              body = re.sub(
+                  r'(python-version:\s*")3\.\d+(")',
+                  rf"\g<1>{version}\2",
+                  body,
+              )
+              body = re.sub(
+                  r"(--python-version )3\.\d+",
+                  rf"\g<1>{version}",
+                  body,
+              )
+              path.write_text(body)
+
+          readme = root / "README.md"
+          body = readme.read_text()
+          body = re.sub(r"Python 3\.\d+", f"Python {version}", body)
+          body = re.sub(r"python:3\.\d+-slim", f"python:{version}-slim", body)
+          body = re.sub(r"(--python-version )3\.\d+", rf"\g<1>{version}", body)
+          readme.write_text(body)
+          PY
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "Using ${IMAGE}"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.python.outputs.version }}
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install pur
+        run: pip install pur
+
+      - name: Bump direct dependency pins
+        run: |
+          pur -r requirements.txt
+          pur -r requirements-dev.txt
+
+      - name: Regenerate requirements.lock
+        run: >
+          uv pip compile requirements.txt
+          --universal --generate-hashes
+          --python-version ${{ steps.python.outputs.version }}
+          -o requirements.lock
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.DEP_BUMP_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: chore/deps-bump
+          title: "chore: bump Python dependencies"
+          commit-message: "chore: bump Python dependencies and base image"
+          body: |
+            Automated quarterly bump:
+
+            - Pinned packages in `requirements.txt` and `requirements-dev.txt`
+            - Base image → `${{ steps.python.outputs.image }}`
+            - Regenerated `requirements.lock` with:
+
+            ```bash
+            uv pip compile requirements.txt --universal --generate-hashes --python-version ${{ steps.python.outputs.version }} -o requirements.lock
+            ```
+
+            Please review release notes for major upgrades (including a new Python
+            minor), then wait for `container.yml` and `pip-audit.yml` to pass before
+            merging.
+
+            If those checks did not start (common when the PR was opened with
+            `GITHUB_TOKEN`), reopen this PR, push an empty commit, or set the
+            `DEP_BUMP_TOKEN` repository secret to a PAT so future bump PRs trigger CI.
+          delete-branch: true

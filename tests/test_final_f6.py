@@ -590,7 +590,7 @@ def test_the_lock_is_complete_every_package_pinned_with_hashes():
 
 def test_the_dockerfile_installs_the_lock_with_hashes_on_the_tested_python():
     docker = (ROOT / "Dockerfile").read_text()
-    assert re.search(r"^FROM python:3\.13-slim(@sha256:[0-9a-f]{64})?$", docker, re.M)
+    assert re.search(r"^FROM python:3\.\d+-slim(@sha256:[0-9a-f]{64})?$", docker, re.M)
     assert "COPY requirements.lock" in docker
     assert re.search(r"pip install .*--require-hashes.* -r requirements\.lock", docker)
     assert not re.search(r"pip install[^\n]*requirements\.txt", docker)

@@ -77,7 +77,10 @@ def _invalid_link(request: Request) -> Response:
 
 
 # ----- home -----------------------------------------------------------------------------------
-@router.api_route("/", methods=["GET", "HEAD"])
+# HEAD is registered separately with include_in_schema=False: a single api_route(["GET","HEAD"])
+# makes FastAPI emit duplicate OpenAPI operation id `home__head` when the schema is built.
+@router.head("/", include_in_schema=False)
+@router.get("/")
 def home(request: Request, notice: str = ""):
     ctx = deps.current_user(request)
     return render(request, "user/home.html", {"ctx": ctx, "left": notice == "left"})

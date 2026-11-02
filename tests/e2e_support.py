@@ -34,11 +34,14 @@ from urllib.parse import urlsplit
 
 import pytest
 
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/pw-browsers")
+# Use a shared browser dir only when the caller already set one, or when /opt/pw-browsers
+# exists (local/container convention). Do not force that path: CI's `playwright install`
+# writes to the default cache, and pointing elsewhere makes every e2e test skip.
+if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ and Path("/opt/pw-browsers").is_dir():
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/pw-browsers"
 
 sync_api = pytest.importorskip("playwright.sync_api", reason="playwright is not installed")
 pyotp = pytest.importorskip("pyotp", reason="pyotp is not installed")
-
 from sqlalchemy import select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -220,8 +223,18 @@ def live(monkeypatch, tmp_path, db_url):
 
 
 # ----- the browser -------------------------------------------------------------------------------------------------
+def _browsers_root() -> Path:
+    """Directory where `playwright install` places browsers (env override or Playwright default)."""
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if override and override != "0":
+        return Path(override)
+    return Path.home() / ".cache" / "ms-playwright"
+
+
 def _installed_chromium() -> list[str]:
-    root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
+    root = _browsers_root()
+    if not root.is_dir():
+        return []
     found = sorted(root.glob("chromium_headless_shell-*/chrome-linux/headless_shell"))
     found += sorted(root.glob("chromium-*/chrome-linux/chrome"))
     return [str(p) for p in found]

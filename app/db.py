@@ -13,6 +13,8 @@ Services never commit; callers own the transaction (see docs/ARCHITECTURE.md).
 
 from __future__ import annotations
 
+import datetime as _datetime
+import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -28,6 +30,19 @@ _BEGIN_OPTION = "coffee_sqlite_begin"
 
 _engine: Engine | None = None
 _engine_lock = threading.Lock()
+
+
+def _register_sqlite_datetime_adapters() -> None:
+    """Replace Python's deprecated default sqlite3 datetime adapters (3.12+).
+
+    SQLAlchemy normally stringifies DateTime binds itself; some paths still hand a
+    datetime to the DBAPI, which would otherwise warn on every execute.
+    """
+    sqlite3.register_adapter(_datetime.date, lambda v: v.isoformat())
+    sqlite3.register_adapter(_datetime.datetime, lambda v: v.isoformat(sep=" ", timespec="microseconds"))
+
+
+_register_sqlite_datetime_adapters()
 
 
 def make_engine(url: str, **kwargs) -> Engine:
