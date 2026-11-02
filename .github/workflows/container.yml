@@ -1,0 +1,120 @@
+name: Container
+
+on:
+  push:
+  pull_request:
+
+env:
+  IMAGE_LOCAL: coffee-ledger:ci
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Install Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=tag
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE_LOCAL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test image
+        env:
+          SECRET_KEY: ci-secret-key-at-least-32-characters-long!!
+          PUBLIC_BASE_URL: https://coffee.example.org
+          MAIL_FROM: "Coffee Ledger <coffee@example.org>"
+        run: |
+          set -euo pipefail
+          docker volume create coffee-ci-data
+          run_common=(
+            --env ENVIRONMENT=production
+            --env SECRET_KEY
+            --env PUBLIC_BASE_URL
+            --env MAIL_FROM
+            --env MAIL_BACKEND=smtp
+            --env SMTP_HOST=127.0.0.1
+            --env SMTP_PORT=587
+            --env SMTP_SECURITY=starttls
+            --env DATABASE_URL=sqlite:////data/coffee.db
+            --env SECRETS_DIR=/secrets
+            --volume coffee-ci-data:/data
+          )
+          docker run --rm "${run_common[@]}" "$IMAGE_LOCAL" alembic upgrade head
+          docker run -d --name coffee-ci "${run_common[@]}" --publish 8000:8000 "$IMAGE_LOCAL"
+          cleanup() {
+            docker rm -f coffee-ci >/dev/null 2>&1 || true
+            docker volume rm coffee-ci-data >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/healthz >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/healthz | grep -q '"status":"ok"'
+          curl -sf http://127.0.0.1:8000/readyz | grep -q '"status":"ok"'
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image to GHCR
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            docker tag "$IMAGE_LOCAL" "$tag"
+            docker push "$tag"
+          done <<EOF
+          ${{ steps.meta.outputs.tags }}
+          EOF
