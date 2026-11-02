@@ -162,8 +162,9 @@ def enumerate_routes(app):
     for path, item in app.openapi()["paths"].items():
         for method in item:
             found.add((method.upper(), path))
-    # routes that are not in the schema
-    found |= {("GET", "/healthz"), ("HEAD", "/healthz"), ("GET", "/readyz"), ("HEAD", "/readyz")}
+    # routes that are not in the schema (health; HEAD / is registered with include_in_schema=False)
+    found |= {("GET", "/healthz"), ("HEAD", "/healthz"), ("GET", "/readyz"), ("HEAD", "/readyz"),
+              ("HEAD", "/")}
     return sorted(found)
 
 
