@@ -47,7 +47,7 @@ phone ──https──> reverse proxy (TLS, HSTS, size limit) ──http──>
 | Tables, constraints, ledger rules | `app/models.py`, `migrations/`, `app/services/` |
 | User, site and admin web routes, templates, static files | `app/web/`, `templates/`, `static/` |
 | Command line (admins, price, mail, checks, QR codes) | `app/cli.py`, `app/cli_admin.py`, `app/cli_setup.py` |
-| Container, scripts, proxy examples | `Dockerfile`, `docker-compose.yml`, `scripts/`, `deploy/` |
+| Container, scripts, proxy examples | Published image `ghcr.io/jhauschild/coffeeaccounting`, `docker-compose.yml`, `scripts/`, `deploy/` |
 
 The ledger is append-only: consumption events, payment events, prices, group remittances and the audit log are never edited or deleted (database triggers reject changes to the audit log; undo and corrections are new, compensating rows). Totals are always computed from the ledger, never stored. The module overview is in `docs/ARCHITECTURE.md`, the v2 rules in `docs/V2-CONTRACT.md`.
 
@@ -184,10 +184,10 @@ In production the app **refuses to start** when `PUBLIC_BASE_URL` is not https, 
 
 ## First-time setup
 
-On a Linux host with Docker Compose, a DNS name, ports 80/443 and a reverse proxy.
+On a Linux host with Docker Compose, a DNS name, ports 80/443 and a reverse proxy. The app image is published at **`ghcr.io/jhauschild/coffeeaccounting`** ([package page](https://github.com/jhauschild/CoffeeAccounting/pkgs/container/coffeeaccounting)); production deploys pull it and do not build from source.
 
 ```bash
-git clone <repository-url> coffee-ledger && cd coffee-ledger
+git clone https://github.com/jhauschild/CoffeeAccounting.git coffee-ledger && cd coffee-ledger
 cp .env.example .env
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"   # use as SECRET_KEY
 chmod 600 .env
@@ -197,7 +197,7 @@ mkdir -p backups && sudo chown 10001 backups      # backup directory, writable b
 Edit `.env`: set `PUBLIC_BASE_URL` (https), `SECRET_KEY`, `MAIL_FROM`, `OPERATOR_CONTACT` and `TRUSTED_PROXY_IPS` (see [step 4 below](#4-trusted-proxy-addresses)). Then:
 
 ```bash
-docker compose build
+docker compose pull                                        # ghcr.io/jhauschild/coffeeaccounting:latest
 docker compose run --rm app alembic upgrade head           # explicit migration step; never run implicitly
 docker compose run --rm -it app python -m app.cli setup    # guided: head admin, mail login, first price, test mail
 docker compose up -d
@@ -236,7 +236,7 @@ docker compose run --rm app python -m app.cli set-price --cents 60 --from 2027-0
 
 ### 1. What Compose runs
 
-One `app` service, **one** replica, with `env_file: .env`, `restart: unless-stopped`, the port published on `127.0.0.1:8000` only, no capabilities and `no-new-privileges`. Volumes:
+One `app` service, **one** replica, image `ghcr.io/jhauschild/coffeeaccounting:latest` (pulled, not built), with `env_file: .env`, `restart: unless-stopped`, the port published on `127.0.0.1:8000` only, no capabilities and `no-new-privileges`. Volumes:
 
 | Volume | Mounted at | Contents |
 | --- | --- | --- |
@@ -244,7 +244,7 @@ One `app` service, **one** replica, with `env_file: .env`, `restart: unless-stop
 | `secrets` (named) | `/secrets` | the encrypted mail login; mounted **only** into the app container; directory mode 0700 owned by the non-root app user (the Dockerfile creates it, the volume inherits it) |
 | `./backups` (bind, `BACKUP_HOST_DIR`) | `/backups` | database backups written by `scripts/backup.sh` |
 
-Compose passes `MAIL_BACKEND=smtp` and `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `MAIL_FROM` from `.env`. No mail login appears in the compose file, `.env`, the Dockerfile or the image. The image runs as a non-root user, runs a single uvicorn worker with `--proxy-headers`, and has a `HEALTHCHECK` on `/healthz`. Validate the file with `docker compose config`.
+Compose passes `MAIL_BACKEND=smtp` and `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `MAIL_FROM` from `.env`. No mail login appears in the compose file, `.env`, the Dockerfile or the image. The image runs as a non-root user, runs a single uvicorn worker with `--proxy-headers`, and has a `HEALTHCHECK` on `/healthz`. Validate the file with `docker compose config`. To pin a release, set `image:` to a digest or an immutable tag such as `ghcr.io/jhauschild/coffeeaccounting:<git-sha>` instead of `:latest`.
 
 ### 2. Reverse proxy and TLS
 
@@ -403,8 +403,8 @@ Everything recorded after the backup is lost; users can simply scan again.
 
 ```bash
 docker compose exec -T app scripts/backup.sh              # 1. backup
-git pull                                                   # 2. new code
-docker compose build                                       # 3. new image
+git pull                                                   # 2. new compose/.env.example if needed
+docker compose pull                                        # 3. new image from GHCR
 docker compose stop app                                    # 4. brief downtime avoids old code on a new schema
 docker compose run --rm app alembic upgrade head           # 5. migrate explicitly
 docker compose up -d                                       # 6. start
@@ -412,7 +412,7 @@ curl -fsS http://127.0.0.1:8000/readyz                     # 7. ready?
 scripts/smoke.sh https://coffee.example.org               # 8. optional check (public pages, no ledger writes)
 ```
 
-Read the release notes and `.env.example` for new variables first. If something goes wrong, restore the backup from step 1 and start the previous image. `/readyz` returns 503 (`"check":"migrations"`) while the database is behind the code; migrations are never run at container start. Do not downgrade a production database except from a backup.
+Read the release notes and `.env.example` for new variables first. If something goes wrong, restore the backup from step 1 and start the previous image tag or digest. `/readyz` returns 503 (`"check":"migrations"`) while the database is behind the code; migrations are never run at container start. Do not downgrade a production database except from a backup.
 
 ## Security considerations
 

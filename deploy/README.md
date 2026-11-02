@@ -1,5 +1,10 @@
 # Deploy notes
 
+Production runs the published image **`ghcr.io/jhauschild/coffeeaccounting`**
+([package page](https://github.com/jhauschild/CoffeeAccounting/pkgs/container/coffeeaccounting)).
+`docker-compose.yml` pulls `:latest` (or pin a digest / git-sha tag); do not `docker compose build` on the server.
+Keep a checkout only for Compose, `.env`, and these proxy examples.
+
 ## Keep one-time tokens out of the logs
 
 `/verify/<token>` (member confirmation 24 h, guest approval 7 days) and `/reset/<token>` (password

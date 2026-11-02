@@ -1,7 +1,8 @@
 # Production-style deployment: one app service behind a reverse proxy on the host (see deploy/).
+# Image: ghcr.io/jhauschild/coffeeaccounting (built by CI; do not build from this checkout).
 #
 #   cp .env.example .env            # edit: PUBLIC_BASE_URL, SECRET_KEY, MAIL_FROM, ...
-#   docker compose build
+#   docker compose pull
 #   docker compose run --rm app alembic upgrade head                        # explicit migration step (never implicit)
 #   docker compose run --rm -it app python -m app.cli setup                 # head admin, mail login, first price
 #   docker compose up -d
@@ -15,8 +16,8 @@
 #                file, in .env or in the image; changing SECRET_KEY makes it unreadable (re-run setup-mail).
 services:
   app:
-    build: .
-    image: coffee-ledger:latest
+    image: ghcr.io/jhauschild/coffeeaccounting:latest
+    pull_policy: always
     env_file: .env
     environment:
       # Never fall back to the development defaults (published SECRET_KEY), whatever .env says.
