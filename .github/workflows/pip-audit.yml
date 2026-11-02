@@ -1,11 +1,18 @@
 name: pip-audit
 
+# Same trigger split as container.yml: one run per PR update; push only on main/tags.
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
   schedule:
     # Catch newly published advisories even when the lock file is unchanged.
     - cron: "17 6 * * 1"
+
+concurrency:
+  group: pip-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   audit:
