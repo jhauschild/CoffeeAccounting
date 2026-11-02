@@ -223,8 +223,18 @@ def live(monkeypatch, tmp_path, db_url):
 
 
 # ----- the browser -------------------------------------------------------------------------------------------------
+def _browsers_root() -> Path:
+    """Directory where `playwright install` places browsers (env override or Playwright default)."""
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if override and override != "0":
+        return Path(override)
+    return Path.home() / ".cache" / "ms-playwright"
+
+
 def _installed_chromium() -> list[str]:
-    root = Path(os.environ["PLAYWRIGHT_BROWSERS_PATH"])
+    root = _browsers_root()
+    if not root.is_dir():
+        return []
     found = sorted(root.glob("chromium_headless_shell-*/chrome-linux/headless_shell"))
     found += sorted(root.glob("chromium-*/chrome-linux/chrome"))
     return [str(p) for p in found]
