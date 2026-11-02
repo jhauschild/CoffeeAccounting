@@ -1,0 +1,67 @@
+# Quarterly bump of pinned Python deps + regenerate requirements.lock, then open a PR.
+#
+# PRs created with the default GITHUB_TOKEN do not start other workflows (container.yml,
+# pip-audit.yml). Set repo secret DEP_BUMP_TOKEN to a PAT (repo + workflow) so checks run
+# on the PR; otherwise reopen the PR or push an empty commit after it opens.
+name: Dependency bump
+
+on:
+  schedule:
+    # 06:17 UTC on 10 Feb / May / Aug / Nov
+    - cron: "17 6 10 2,5,8,11 *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install pur
+        run: pip install pur
+
+      - name: Bump direct dependency pins
+        run: |
+          pur -r requirements.txt
+          pur -r requirements-dev.txt
+
+      - name: Regenerate requirements.lock
+        run: >
+          uv pip compile requirements.txt
+          --universal --generate-hashes --python-version 3.13
+          -o requirements.lock
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.DEP_BUMP_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: chore/deps-bump
+          title: "chore: bump Python dependencies"
+          commit-message: "chore: bump Python dependencies"
+          body: |
+            Automated quarterly bump of pinned packages in `requirements.txt` and
+            `requirements-dev.txt`, then regeneration of `requirements.lock` with:
+
+            ```bash
+            uv pip compile requirements.txt --universal --generate-hashes --python-version 3.13 -o requirements.lock
+            ```
+
+            Please review release notes for major upgrades, then wait for `container.yml`
+            and `pip-audit.yml` to pass before merging.
+
+            If those checks did not start (common when the PR was opened with
+            `GITHUB_TOKEN`), reopen this PR, push an empty commit, or set the
+            `DEP_BUMP_TOKEN` repository secret to a PAT so future bump PRs trigger CI.
+          delete-branch: true
