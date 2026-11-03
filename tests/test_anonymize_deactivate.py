@@ -199,8 +199,89 @@ def test_guest_deactivation_keeps_null_email(db, chair):
     guest = factories.make_guest(db, sponsor, display_name="Guest One", username="guestone",
                                  password_hash=passwords.hash_password(PASSWORD))
     assert guest.email is None
-    _user, msg = users.anonymize_deactivate(db, user=guest, reason="self", actor_type="user", notify=True)
+    _user, messages = users.anonymize_deactivate(db, user=guest, reason="self", actor_type="user", notify=True)
     db.commit()
     g = db.get(User, guest.id)
     assert g.email is None and g.username.startswith("alumni-")
-    assert msg is not None and msg.to == "sponsor1@tum.de"
+    assert any(m.to == "sponsor1@tum.de" for m in messages)
+
+
+def test_owes_mails_user_and_group_admins(db, chair, price, global_admin):
+    ga = factories.make_admin(db, role="chair", chairs=[chair], username="gaowes")
+    ga_email = db.get(User, ga.user_id).email
+    member = factories.make_member(db, "Owes Coffee", chair, username="owesone", email="owesone@tum.de")
+    factories.add_events(db, member, ["single", "double"])  # 1.50 if price 50
+    real_name = member.display_name
+    _user, messages = users.anonymize_deactivate(
+        db, user=member, reason="admin", actor_type="admin", actor_id=global_admin.id, notify=True
+    )
+    db.commit()
+    assert db.get(User, member.id).display_name.startswith("Alumni ")
+    tos = {m.to for m in messages}
+    assert "owesone@tum.de" in tos and ga_email in tos
+    user_mails = [m for m in messages if m.to == "owesone@tum.de"]
+    assert any("please settle" in m.subject.lower() or "owe" in m.body.lower() for m in user_mails)
+    assert any(real_name in m.body for m in messages if m.to == ga_email)
+    meta = db.scalar(select(AuditLog.meta).where(AuditLog.action == "user.deactivated").order_by(AuditLog.id.desc()))
+    assert meta["balance_cents"] > 0 and meta["balance_mails"]["collect_owed"] >= 1
+
+
+def test_credit_mails_user_only(db, chair, price, global_admin):
+    factories.make_admin(db, role="chair", chairs=[chair], username="gacredit")
+    member = factories.make_member(db, "Has Credit", chair, username="creditone", email="creditone@tum.de")
+    factories.make_payment(db, member, global_admin, 300)
+    _user, messages = users.anonymize_deactivate(
+        db, user=member, reason="self", actor_type="user", actor_id=member.id, notify=True
+    )
+    db.commit()
+    settle = [m for m in messages if "credit to reclaim" in m.subject.lower()]
+    assert len(settle) == 1 and settle[0].to == "creditone@tum.de"
+    # no collect_owed mails to GAs for credit
+    assert all("outstanding balance to collect" not in m.subject.lower() for m in messages)
+    meta = db.scalar(select(AuditLog.meta).where(AuditLog.action == "user.deactivated").order_by(AuditLog.id.desc()))
+    assert meta["balance_cents"] < 0 and meta["balance_mails"]["has_credit"] == 1 and meta["balance_mails"]["collect_owed"] == 0
+
+
+def test_no_ga_escalates_to_head_notify_email(db, chair, price, global_admin, monkeypatch):
+    monkeypatch.setenv("HEAD_ADMIN_NOTIFY_EMAIL", "head-ops@example.org")
+    from tests.conftest import reload_settings
+
+    reload_settings()
+    member = factories.make_member(db, "Lone Owes", chair, username="loneowes", email="loneowes@tum.de")
+    factories.add_events(db, member, ["single"])
+    _user, messages = users.anonymize_deactivate(
+        db, user=member, reason="admin", actor_type="admin", notify=True
+    )
+    db.commit()
+    assert any(
+        m.to == "head-ops@example.org" and "no active group admin" in m.body.lower() for m in messages
+    )
+    assert any(m.to == "loneowes@tum.de" for m in messages)
+    meta = db.scalar(select(AuditLog.meta).where(AuditLog.action == "user.deactivated").order_by(AuditLog.id.desc()))
+    assert meta["balance_mails"]["no_group_admin"] == 1 and meta["balance_notify_head_skipped"] is False
+
+
+def test_no_ga_skips_head_when_unset(db, chair, price, global_admin):
+    member = factories.make_member(db, "Skip Head", chair, username="skiphead", email="skiphead@tum.de")
+    factories.add_events(db, member, ["single"])
+    _user, messages = users.anonymize_deactivate(
+        db, user=member, reason="admin", actor_type="admin", notify=True
+    )
+    db.commit()
+    assert all("no group admin" not in m.subject.lower() for m in messages)  # head escalation subject
+    meta = db.scalar(select(AuditLog.meta).where(AuditLog.action == "user.deactivated").order_by(AuditLog.id.desc()))
+    assert meta["balance_notify_head_skipped"] is True and meta["balance_mails"]["no_group_admin"] == 0
+
+
+def test_guest_owes_notifies_sponsor_and_gas(db, chair, price, global_admin):
+    ga = factories.make_admin(db, role="chair", chairs=[chair], username="gaguest")
+    ga_email = db.get(User, ga.user_id).email
+    sponsor = factories.make_member(db, "Sponsor Two", chair, username="sponsor2", email="sponsor2@tum.de")
+    guest = factories.make_guest(db, sponsor, display_name="Guest Owes", username="guestowes")
+    factories.add_events(db, guest, ["double"])
+    _user, messages = users.anonymize_deactivate(
+        db, user=guest, reason="admin", actor_type="admin", notify=True
+    )
+    db.commit()
+    tos = {m.to for m in messages}
+    assert "sponsor2@tum.de" in tos and ga_email in tos

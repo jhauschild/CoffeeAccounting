@@ -120,6 +120,9 @@ class Settings(BaseSettings):
     identity_restore_days: int = 90
     # Auto-deactivate active accounts with no activity (login or coffee) for this many days.
     inactive_account_days: int = 180
+    # Address for balance escalation when a chair has no active group admin (deactivation with
+    # non-zero balance). Empty = skip that mail (deactivation still proceeds).
+    head_admin_notify_email: str = ""
     # None = default by environment (true in production, false otherwise); resolved in `_validate`.
     balance_totp_required: bool | None = None
 
@@ -243,6 +246,14 @@ class Settings(BaseSettings):
             errors.append("ARGON2_MEMORY_COST_KIB must be at least 8 per lane (ARGON2_PARALLELISM)")
         if not 1 <= self.password_min_length <= 128:
             errors.append("PASSWORD_MIN_LENGTH must be between 1 and 128")
+        if self.head_admin_notify_email.strip():
+            from app.services.errors import InvalidInput
+            from app.services.mail import normalize_address
+
+            try:
+                self.head_admin_notify_email = normalize_address(self.head_admin_notify_email)
+            except InvalidInput:
+                errors.append("HEAD_ADMIN_NOTIFY_EMAIL must be a plain email address when set")
 
         if self.is_production:
             if self.mail_backend != "smtp":

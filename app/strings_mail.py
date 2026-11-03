@@ -103,6 +103,49 @@ STRINGS: dict[str, str] = {
     "mail.deactivate.inactive_extra": (
         "This happened automatically because there was no sign-in or coffee activity for a long time.\n\n"
     ),
+    "mail.deactivate_please_pay.subject": "{app_title}: please settle your coffee balance",
+    "mail.deactivate_please_pay.body": (
+        "Hello,\n\n"
+        "your account \"{username}\" at {app_title} is being deactivated, but you still owe {amount}.\n\n"
+        "Please pay this amount to a group admin of your {chair_label} so the ledger can be settled:\n"
+        "{contacts}\n\n"
+        "{signature}\n"
+    ),
+    "mail.deactivate_has_credit.subject": "{app_title}: coffee credit to reclaim",
+    "mail.deactivate_has_credit.body": (
+        "Hello,\n\n"
+        "your account \"{username}\" at {app_title} is being deactivated, but you still have a credit of "
+        "{amount}.\n\n"
+        "Please contact a group admin of your {chair_label} to reclaim it:\n"
+        "{contacts}\n\n"
+        "{signature}\n"
+    ),
+    "mail.deactivate_collect_owed.subject": "{app_title}: outstanding balance to collect",
+    "mail.deactivate_collect_owed.body": (
+        "Hello,\n\n"
+        "the account of {display_name} (username \"{username}\") in {chair_name} at {app_title} is being "
+        "deactivated and still owes {amount}.\n\n"
+        "Please collect this amount and record the payment in the admin area:\n"
+        "{admin_url}\n\n"
+        "{signature}\n"
+    ),
+    "mail.deactivate_no_group_admin.subject": "{app_title}: outstanding balance — no group admin",
+    "mail.deactivate_no_group_admin.body": (
+        "Hello,\n\n"
+        "the account of {display_name} (username \"{username}\") in {chair_name} at {app_title} is being "
+        "deactivated with an outstanding balance of {amount} ({balance_kind}).\n\n"
+        "This {chair_label} currently has no active group admin. Group admins are responsible for collecting "
+        "and paying out coffee money within the group. Please appoint a group admin for {chair_name} as soon "
+        "as possible, then settle this balance:\n"
+        "{admin_url}\n\n"
+        "{signature}\n"
+    ),
+    "mail.deactivate.contacts_none": (
+        "(No group admin is currently assigned for this {chair_label}. Please ask the person who runs "
+        "{app_title} how to settle.)"
+    ),
+    "mail.deactivate.balance_kind_owed": "amount owed by the person",
+    "mail.deactivate.balance_kind_credit": "credit owed to the person",
     # ----- units for validity text -----------------------------------------------------------------------------
     "mail.duration.minute": "1 minute",
     "mail.duration.minutes": "{n} minutes",

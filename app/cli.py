@@ -97,16 +97,16 @@ def cmd_deactivate_inactive(args) -> int:
             return 0
     done = 0
     for uid in due_ids:
-        message = None
+        messages = []
         with write_session() as db:
             user = db.get(User, uid)
             if user is None or user.status != "active":
                 continue
-            _user, message = users.anonymize_deactivate(
+            _user, messages = users.anonymize_deactivate(
                 db, user=user, reason="inactive", actor_type="system", notify=True
             )
             done += 1
-        if message is not None:
+        for message in messages:
             send_in_background(message, message.to)
     print(f"Deactivated {done} inactive account(s)")
     return 0

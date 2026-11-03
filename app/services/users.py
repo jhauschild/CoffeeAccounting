@@ -274,6 +274,135 @@ def _revoke_linked_admin_sessions(db: Session, user_id: uuid.UUID, now: datetime
     return revoked
 
 
+def active_group_admins_for_chair(
+    db: Session, chair_id: uuid.UUID, *, exclude_user_id: uuid.UUID | None = None
+) -> list[tuple[AdminUser, User]]:
+    """Active group admins whose linked member is in `chair_id` and has an email."""
+    rows = db.execute(
+        select(AdminUser, User)
+        .join(User, User.id == AdminUser.user_id)
+        .where(
+            AdminUser.role == "chair",
+            AdminUser.active.is_(True),
+            User.chair_id == chair_id,
+            User.email.is_not(None),
+        )
+        .order_by(User.normalized_name, User.id)
+    ).all()
+    out: list[tuple[AdminUser, User]] = []
+    for admin, linked in rows:
+        if exclude_user_id is not None and linked.id == exclude_user_id:
+            continue
+        out.append((admin, linked))
+    return out
+
+
+def _deactivate_notify_address(db: Session, user: User) -> str | None:
+    """Member email, or guest sponsor email, for user-facing deactivation mails."""
+    if user.email:
+        return user.email
+    if user.sponsor_id is not None:
+        sponsor = db.get(User, user.sponsor_id)
+        return sponsor.email if sponsor is not None else None
+    return None
+
+
+def _ga_contact_lines(gas: list[tuple[AdminUser, User]]) -> str:
+    from app.strings import t
+
+    if not gas:
+        return t("mail.deactivate.contacts_none")
+    return "\n".join(f"- {linked.display_name} <{linked.email}>" for _admin, linked in gas)
+
+
+def _build_deactivate_mails(
+    db: Session,
+    *,
+    user: User,
+    reason: str,
+    expires_at: datetime,
+    has_login: bool,
+) -> tuple[list, dict]:
+    """Build mails using the pre-anonymize identity. Returns `(messages, audit_meta)`."""
+    from app.money import format_money
+    from app.services import ledger, mail_templates
+    from app.services.mail import MailMessage, build_message
+    from app.strings import t
+
+    messages: list[MailMessage] = []
+    meta: dict = {
+        "balance_cents": 0,
+        "balance_mails": {"deactivate": 0, "please_pay": 0, "has_credit": 0, "collect_owed": 0, "no_group_admin": 0},
+        "balance_notify_head_skipped": False,
+    }
+    to_user = _deactivate_notify_address(db, user)
+    if has_login and to_user:
+        subject, body = mail_templates.account_deactivated(
+            username=user.username or user.display_name, restore_until=expires_at, reason=reason
+        )
+        messages.append(build_message(to=to_user, subject=subject, body=body))
+        meta["balance_mails"]["deactivate"] = 1
+
+    balance = ledger.get_totals(db, user.id).balance_cents
+    meta["balance_cents"] = balance
+    if balance == 0:
+        return messages, meta
+
+    amount = format_money(abs(balance))
+    gas = active_group_admins_for_chair(db, user.chair_id, exclude_user_id=user.id)
+    contacts = _ga_contact_lines(gas)
+    chair = db.get(Chair, user.chair_id)
+    chair_name = chair.short_name if chair is not None else str(user.chair_id)
+    admin_url = f"{get_settings().public_base_url.rstrip('/')}/admin/users/{user.id}"
+    username = user.username or user.display_name
+
+    if balance > 0 and to_user:
+        subject, body = mail_templates.deactivate_please_pay(
+            username=username, amount=amount, contacts=contacts
+        )
+        messages.append(build_message(to=to_user, subject=subject, body=body))
+        meta["balance_mails"]["please_pay"] = 1
+        for _admin, linked in gas:
+            subject, body = mail_templates.deactivate_collect_owed(
+                display_name=user.display_name,
+                username=username,
+                chair_name=chair_name,
+                amount=amount,
+                admin_url=admin_url,
+            )
+            messages.append(build_message(to=linked.email, subject=subject, body=body))
+            meta["balance_mails"]["collect_owed"] += 1
+    elif balance < 0 and to_user:
+        subject, body = mail_templates.deactivate_has_credit(
+            username=username, amount=amount, contacts=contacts
+        )
+        messages.append(build_message(to=to_user, subject=subject, body=body))
+        meta["balance_mails"]["has_credit"] = 1
+
+    if not gas:
+        head_to = get_settings().head_admin_notify_email.strip()
+        if head_to:
+            kind = (
+                t("mail.deactivate.balance_kind_owed")
+                if balance > 0
+                else t("mail.deactivate.balance_kind_credit")
+            )
+            subject, body = mail_templates.deactivate_no_group_admin(
+                display_name=user.display_name,
+                username=username,
+                chair_name=chair_name,
+                amount=amount,
+                balance_kind=kind,
+                admin_url=admin_url,
+            )
+            messages.append(build_message(to=head_to, subject=subject, body=body))
+            meta["balance_mails"]["no_group_admin"] = 1
+        else:
+            meta["balance_notify_head_skipped"] = True
+
+    return messages, meta
+
+
 def anonymize_deactivate(
     db: Session,
     *,
@@ -284,15 +413,12 @@ def anonymize_deactivate(
     ip: str | None = None,
     now: datetime | None = None,
     notify: bool = True,
-) -> tuple[User, object | None]:
+) -> tuple[User, list]:
     """Anonymize display name / username / email, stash originals for restore, set inactive.
 
-    Returns `(user, mail_message_or_none)`. Callers send the message after commit (background or CLI).
+    Returns `(user, mail_messages)`. Callers send messages after commit (background or CLI).
     `chair_id` and `password_hash` are kept. Idempotent if already inactive with a live stash.
     """
-    from app.services import mail_templates
-    from app.services.mail import MailMessage, build_message
-
     if reason not in ("self", "admin", "inactive"):
         raise InvalidInput("invalid deactivation reason")
     now = ensure_utc(now) if now is not None else utcnow()
@@ -301,29 +427,24 @@ def anonymize_deactivate(
 
     existing = get_identity_restore(db, user.id, now=now)
     if user.status == "inactive" and existing is not None:
-        return user, None
+        return user, []
     if (
         user.status == "inactive"
         and existing is None
         and user.username_normalized
         and user.username_normalized.startswith("alumni-")
     ):
-        return user, None  # already anonymized and restore window expired
+        return user, []  # already anonymized and restore window expired
 
     settings = get_settings()
     expires_at = now + timedelta(days=settings.identity_restore_days)
     has_login = bool(user.username and user.username_normalized)
-    mail_msg: MailMessage | None = None
-    if notify and has_login:
-        to = user.email
-        if to is None and user.sponsor_id is not None:
-            sponsor = db.get(User, user.sponsor_id)
-            to = sponsor.email if sponsor is not None else None
-        if to:
-            subject, body = mail_templates.account_deactivated(
-                username=user.username, restore_until=expires_at, reason=reason
-            )
-            mail_msg = build_message(to=to, subject=subject, body=body)
+    messages: list = []
+    balance_meta: dict = {}
+    if notify:
+        messages, balance_meta = _build_deactivate_mails(
+            db, user=user, reason=reason, expires_at=expires_at, has_login=has_login
+        )
 
     if existing is not None:
         db.delete(existing)
@@ -358,6 +479,15 @@ def anonymize_deactivate(
 
     sessions_revoked = sessions.revoke_user_sessions(db, user.id, now)
     admin_revoked = _revoke_linked_admin_sessions(db, user.id, now)
+    meta = {
+        "anonymized": True,
+        "reason": reason,
+        "restore_until": expires_at.isoformat(),
+        "sessions_revoked": sessions_revoked,
+        "admin_sessions_revoked": admin_revoked,
+    }
+    if balance_meta:
+        meta.update(balance_meta)
     audit.log(
         db,
         actor_type=actor_type,
@@ -365,17 +495,11 @@ def anonymize_deactivate(
         action="user.deactivated",
         target_type="user",
         target_id=user.id,
-        metadata={
-            "anonymized": True,
-            "reason": reason,
-            "restore_until": expires_at.isoformat(),
-            "sessions_revoked": sessions_revoked,
-            "admin_sessions_revoked": admin_revoked,
-        },
+        metadata=meta,
         ip=ip,
         now=now,
     )
-    return user, mail_msg
+    return user, messages
 
 
 def restore_identity(
@@ -439,8 +563,8 @@ def set_user_status(
     ip: str | None = None,
     now: datetime | None = None,
     notify: bool = True,
-) -> tuple[User, object | None]:
-    """Deactivate (anonymize) or reactivate (restore if possible). Returns `(user, mail_or_none)`.
+) -> tuple[User, list]:
+    """Deactivate (anonymize) or reactivate (restore if possible). Returns `(user, mail_messages)`.
 
     Deactivating a user linked to an ACTIVE group admin row (role "chair") needs a head admin.
     """
@@ -465,7 +589,7 @@ def set_user_status(
     if get_identity_restore(db, user.id, now=now) is not None:
         return restore_identity(
             db, user=user, actor_type=ACTOR_ADMIN, actor_id=admin.id, ip=ip, now=now
-        ), None
+        ), []
     if user.status != "active":
         user.status = "active"
         user.last_activity_at = now
@@ -480,12 +604,12 @@ def set_user_status(
             ip=ip,
             now=now,
         )
-    return user, None
+    return user, []
 
 
 def self_deactivate(
     db: Session, *, user: User, ip: str | None = None, now: datetime | None = None
-) -> tuple[User, object | None]:
+) -> tuple[User, list]:
     """Signed-in account deactivates itself (anonymizing). Group admins must be demoted first."""
     if _is_active_group_admin(db, user.id):
         raise Forbidden("a group admin cannot deactivate their own account; ask a head admin to remove the role first")

@@ -226,15 +226,15 @@ def change_status(request: Request, background_tasks: BackgroundTasks, active: s
                   uid: uuid.UUID = Depends(ad.admin_user_access), ctx: ad.AdminContext = Depends(ad.require_admin)):
     if active not in ("0", "1"):
         raise NotFound("unknown action")
-    message = None
+    messages = []
     try:
         with write_session() as db:
-            _user, message = users.set_user_status(
+            _user, messages = users.set_user_status(
                 db, admin=ctx.admin, user_id=uid, active=active == "1", ip=client_ip(request)
             )
     except ServiceError as exc:
         return ad.back(_detail_path(uid), err=ad.error_key(exc))
-    if message is not None:
+    for message in messages:
         background_tasks.add_task(send_in_background, message, message.to)
     return ad.back(_detail_path(uid), msg="user_reactivated" if active == "1" else "user_deactivated")
 

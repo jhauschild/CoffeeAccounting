@@ -112,3 +112,56 @@ def account_deactivated(*, username: str, restore_until, reason: str = "admin") 
         signature=_signature(),
     )
     return t("mail.deactivate.subject"), body
+
+
+def deactivate_please_pay(*, username: str, amount: str, contacts: str) -> tuple[str, str]:
+    body = t(
+        "mail.deactivate_please_pay.body",
+        username=_name(username),
+        amount=amount,
+        contacts=contacts,
+        signature=_signature(),
+    )
+    return t("mail.deactivate_please_pay.subject"), body
+
+
+def deactivate_has_credit(*, username: str, amount: str, contacts: str) -> tuple[str, str]:
+    body = t(
+        "mail.deactivate_has_credit.body",
+        username=_name(username),
+        amount=amount,
+        contacts=contacts,
+        signature=_signature(),
+    )
+    return t("mail.deactivate_has_credit.subject"), body
+
+
+def deactivate_collect_owed(
+    *, display_name: str, username: str, chair_name: str, amount: str, admin_url: str
+) -> tuple[str, str]:
+    body = t(
+        "mail.deactivate_collect_owed.body",
+        display_name=_name(display_name),
+        username=_name(username),
+        chair_name=_name(chair_name),
+        amount=amount,
+        admin_url=admin_url,
+        signature=_signature(),
+    )
+    return t("mail.deactivate_collect_owed.subject"), body
+
+
+def deactivate_no_group_admin(
+    *, display_name: str, username: str, chair_name: str, amount: str, balance_kind: str, admin_url: str
+) -> tuple[str, str]:
+    body = t(
+        "mail.deactivate_no_group_admin.body",
+        display_name=_name(display_name),
+        username=_name(username),
+        chair_name=_name(chair_name),
+        amount=amount,
+        balance_kind=balance_kind,
+        admin_url=admin_url,
+        signature=_signature(),
+    )
+    return t("mail.deactivate_no_group_admin.subject"), body

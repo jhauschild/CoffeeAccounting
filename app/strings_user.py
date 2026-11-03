@@ -239,8 +239,9 @@ STRINGS: dict[str, str] = {
         "Your display name on the open site becomes an anonymous Alumni label. Your username and e-mail are "
         "cleared from the account so they can be used by a new registration. Your {chair_label}, password and "
         "ledger history stay. For 90 days you can restore everything by signing in with the same username and "
-        "password. After that the original name and e-mail cannot be restored. Group admins must ask a head "
-        "admin to remove the role first."
+        "password. After that the original name and e-mail cannot be restored. If you still owe money or have "
+        "credit, settlement mails go to you and the group admins. Group admins must ask a head admin to remove "
+        "the role first."
     ),
     "user.account.deactivate_confirm": "I understand my name will be anonymized and want to deactivate this account",
     "user.account.deactivate_submit": "Deactivate my account",

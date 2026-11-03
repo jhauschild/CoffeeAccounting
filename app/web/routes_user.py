@@ -551,10 +551,10 @@ def deactivate_account(request: Request, background_tasks: BackgroundTasks,
     if confirm != "1":
         return _account_page(request, ctx, errors={"deactivate": "user.account.error_deactivate_confirm"},
                              status=400)
-    message = None
+    messages = []
     try:
         with write_session() as db:
-            _user, message = users.self_deactivate(
+            _user, messages = users.self_deactivate(
                 db, user=users.get_user(db, ctx.user.id), ip=deps.client_ip(request)
             )
     except Forbidden:
@@ -562,7 +562,7 @@ def deactivate_account(request: Request, background_tasks: BackgroundTasks,
                              status=403)
     except UserInactive:
         return _message(request, "user.scan.inactive_title", "user.scan.inactive_body", status=403, tone="error")
-    if message is not None:
+    for message in messages:
         background_tasks.add_task(send_in_background, message, message.to)
     response = _redirect("/?notice=left")
     deps.clear_session_cookie(response)
