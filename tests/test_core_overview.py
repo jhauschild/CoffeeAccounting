@@ -210,10 +210,11 @@ def test_inactive_users_hidden_unless_balance_nonzero(db, price50, chair, global
     for u in (quiet, owing, credit, settled):
         users.set_user_status(db, admin=global_admin, user_id=u.id, active=False)
     db.commit()
-    rows = {r.display_name: r for r in overview.people(db, now=NOW).rows}
-    assert set(rows) == {"Owing Gone", "Credit Gone"}
-    assert all(r.inactive for r in rows.values())
-    assert rows["Owing Gone"].balance_cents == 50 and rows["Credit Gone"].balance_cents == -300
+    people = overview.people(db, now=NOW).rows
+    rows = {r.id: r for r in people}
+    assert set(rows) == {owing.id, credit.id}
+    assert all(r.inactive and r.display_name.startswith("Alumni ") for r in rows.values())
+    assert rows[owing.id].balance_cents == 50 and rows[credit.id].balance_cents == -300
     with pytest.raises(NotFound):
         overview.person_history(db, quiet.id)
     with pytest.raises(NotFound):

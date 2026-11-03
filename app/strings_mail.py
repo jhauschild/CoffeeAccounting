@@ -86,6 +86,23 @@ STRINGS: dict[str, str] = {
         "was created.\n\n"
         "{signature}\n"
     ),
+    "mail.deactivate.subject": "{app_title}: account deactivated",
+    "mail.deactivate.body": (
+        "Hello,\n\n"
+        "{inactive_note}"
+        "the account \"{username}\" at {app_title} has been deactivated. On the open site the profile now "
+        "appears under an anonymous name (Alumni), and the login name and email on the account were cleared "
+        "from public use.\n\n"
+        "Until {restore_until} you can restore the original name and sign in again by logging in with the "
+        "same username and password at:\n"
+        "{signin_url}\n\n"
+        "After that date the original name and email cannot be restored.\n\n"
+        "If you still use coffee at the department, sign in before the deadline to keep the account.\n\n"
+        "{signature}\n"
+    ),
+    "mail.deactivate.inactive_extra": (
+        "This happened automatically because there was no sign-in or coffee activity for a long time.\n\n"
+    ),
     # ----- units for validity text -----------------------------------------------------------------------------
     "mail.duration.minute": "1 minute",
     "mail.duration.minutes": "{n} minutes",

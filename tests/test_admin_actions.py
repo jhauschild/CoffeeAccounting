@@ -163,9 +163,11 @@ def test_deactivate_reactivate_and_user_sessions(gc, cc, db, alice):
     assert "msg=user_deactivated" in r.headers["location"]
     with read_session() as r2:
         assert r2.get(User, alice.id).status == "inactive"
-    assert "Reactivate" in gc[0].get(f"/admin/users/{alice.id}").text
+    detail = gc[0].get(f"/admin/users/{alice.id}").text
+    assert "Restore identity" in detail or "Reactivate" in detail
     post(gc, f"/admin/users/{alice.id}/status", active="1")
     with read_session() as r2:
+        # Legacy profiles without a login name stay Alumni N (no restore stash).
         assert r2.get(User, alice.id).status == "active"
     assert post(cc, f"/admin/users/{alice.id}/status", active="x").status_code == 404
     assert {"user.sessions_revoked", "user.deactivated", "user.reactivated"} <= set(actions())

@@ -54,6 +54,7 @@ ADMIN_ROLES = ("global", "chair")  # role "chair" is shown in the UI as "group a
 ACCOUNT_KINDS = ("member", "guest")
 PAYMENT_KINDS = ("cash", "bookkeeping")
 PENDING_ACTION_KINDS = COFFEE_KINDS + ("view_site",)
+IDENTITY_RESTORE_REASONS = ("self", "admin", "inactive")
 USERNAME_MAX = 64
 EMAIL_MAX = 254
 ACTOR_TYPES = ("admin", "user", "system")
@@ -435,6 +436,38 @@ class RateLimitEvent(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now)
 
     __table_args__ = (Index("ix_rate_limit_events_bucket_key_created", "bucket", "key", "created_at"),)
+
+
+class AnonymizationCounter(Base):
+    """Monotonic counters for anonymized display names / usernames (e.g. name='alumni')."""
+
+    __tablename__ = "anonymization_counters"
+
+    name: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class UserIdentityRestore(Base):
+    """Original identity after anonymizing deactivation; purged when `expires_at` passes."""
+
+    __tablename__ = "user_identity_restores"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), unique=True)
+    display_name: Mapped[str] = mapped_column(String(DISPLAY_NAME_MAX))
+    username: Mapped[str] = mapped_column(String(USERNAME_MAX))
+    username_normalized: Mapped[str] = mapped_column(String(USERNAME_MAX), unique=True)
+    email: Mapped[str | None] = mapped_column(String(EMAIL_MAX))
+    reason: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_now)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+    __table_args__ = (
+        CheckConstraint(_in("reason", IDENTITY_RESTORE_REASONS), name="reason_valid"),
+        CheckConstraint("length(display_name) > 0", name="display_name_nonempty"),
+        CheckConstraint("length(username) > 0", name="username_nonempty"),
+        Index("ix_user_identity_restores_expires_at", "expires_at"),
+    )
 
 
 class AuditLog(Base):

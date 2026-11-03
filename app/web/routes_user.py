@@ -544,6 +544,32 @@ def edit_page(request: Request, ctx: UserContext = Depends(deps.require_user),
     return _edit_page(request, db, ctx, {"display_name": ctx.user.display_name, "chair_id": str(ctx.user.chair_id)})
 
 
+@router.post("/account/deactivate", dependencies=[Depends(deps.require_csrf)])
+def deactivate_account(request: Request, background_tasks: BackgroundTasks,
+                       confirm: str = Form("", max_length=1),
+                       ctx: UserContext = Depends(deps.require_user)):
+    if confirm != "1":
+        return _account_page(request, ctx, errors={"deactivate": "user.account.error_deactivate_confirm"},
+                             status=400)
+    message = None
+    try:
+        with write_session() as db:
+            _user, message = users.self_deactivate(
+                db, user=users.get_user(db, ctx.user.id), ip=deps.client_ip(request)
+            )
+    except Forbidden:
+        return _account_page(request, ctx, errors={"deactivate": "user.account.error_deactivate_admin"},
+                             status=403)
+    except UserInactive:
+        return _message(request, "user.scan.inactive_title", "user.scan.inactive_body", status=403, tone="error")
+    if message is not None:
+        background_tasks.add_task(send_in_background, message, message.to)
+    response = _redirect("/?notice=left")
+    deps.clear_session_cookie(response)
+    deps.forget_user(request)
+    return response
+
+
 @router.post("/account/edit", dependencies=[Depends(deps.require_csrf)])
 def edit_submit(request: Request, display_name: str = Form(""), chair_id: str = Form(""),
                 ctx: UserContext = Depends(deps.require_user)):

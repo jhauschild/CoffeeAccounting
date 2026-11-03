@@ -280,7 +280,7 @@ def test_readme_covers_the_v2_operations_topics():
         assert needle.lower() in lowered, needle
     # known limitations and out-of-scope lists exist
     assert "## Known limitations" in readme and "## Out of scope" in readme
-    for limitation in ("cookie jar", "No erasure tooling", "TUM aliases", "mail login is not in backups",
+    for limitation in ("cookie jar", "No full erasure", "TUM aliases", "mail login is not in backups",
                        "sponsor trust"):
         assert limitation.lower() in lowered, limitation
     # removed v1 concepts are not documented as current

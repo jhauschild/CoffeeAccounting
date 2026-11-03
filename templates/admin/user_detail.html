@@ -126,9 +126,14 @@
       <input type="hidden" name="active" value="0">
       <button type="submit" class="button-danger">{{ t("admin.detail.deactivate") }}</button>
       <p class="muted">{{ t("admin.detail.deactivate_hint") }}</p>
+    {% elif identity_restore %}
+      <input type="hidden" name="active" value="1">
+      <button type="submit">{{ t("admin.detail.restore_identity") }}</button>
+      <p class="muted">{{ t("admin.detail.restore_hint", until=identity_restore.expires_at|local) }}</p>
     {% else %}
       <input type="hidden" name="active" value="1">
       <button type="submit">{{ t("admin.detail.reactivate") }}</button>
+      <p class="muted">{{ t("admin.detail.reactivate_hint") }}</p>
     {% endif %}
   </form>
   <hr>

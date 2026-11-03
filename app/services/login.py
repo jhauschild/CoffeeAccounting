@@ -40,8 +40,8 @@ from sqlalchemy.orm import Session
 
 from app.db import write_session
 from app.models import User
-from app.services import audit, passwords, ratelimit, registration
-from app.services.errors import InvalidCredentials, RateLimited
+from app.services import audit, passwords, ratelimit, registration, users
+from app.services.errors import Conflict, InvalidCredentials, RateLimited
 from app.services.onboarding import OnboardResult, start_session_and_record
 from app.timeutil import ensure_utc, utcnow
 
@@ -67,6 +67,28 @@ def can_sign_in(user: User | None) -> bool:
             and user.verified_at is not None and bool(user.password_hash))
 
 
+def _can_restore_sign_in(user: User | None) -> bool:
+    """Inactive anonymized account that still has a password (restore via original username stash)."""
+    return (user is not None and user.status == "inactive" and user.account_kind in ("member", "guest")
+            and user.verified_at is not None and bool(user.password_hash))
+
+
+def _lookup_sign_in_user(db: Session, normalized: str, *, now) -> tuple[User | None, bool]:
+    """`(user, via_restore)`. Prefer a live account; else a non-expired identity stash."""
+    if not normalized:
+        return None, False
+    user = db.scalar(select(User).where(User.username_normalized == normalized))
+    if can_sign_in(user):
+        return user, False
+    stash = users.get_identity_restore_by_username(db, normalized, now=now)
+    if stash is None:
+        return None, False
+    user = db.get(User, stash.user_id)
+    if _can_restore_sign_in(user):
+        return user, True
+    return None, False
+
+
 def _check_limits(db: Session, checks, ip: str, now: datetime) -> None:
     """Raise `RateLimited` (before any password check, recording nothing) when a failure cap or the success cap
     of this client address is reached."""
@@ -80,14 +102,16 @@ def _check_limits(db: Session, checks, ip: str, now: datetime) -> None:
 
 def authenticate(db: Session, username: str, password: str, ip: str, *, now: datetime | None = None) -> User:
     """Check the credentials and return the user, or raise `InvalidCredentials` (failure recorded) or
-    `RateLimited` (nothing recorded). Does not start a session. Argon2 runs inside the caller's transaction."""
+    `RateLimited` (nothing recorded). Does not start a session. Argon2 runs inside the caller's transaction.
+    An anonymized inactive account can authenticate via its original username while a restore stash exists;
+    identity is restored before return."""
     now = ensure_utc(now) if now is not None else utcnow()
     normalized = normalize_username(username)
     checks = _limit_checks(normalized, ip)
     _check_limits(db, checks, ip, now)
-    user = db.scalar(select(User).where(User.username_normalized == normalized)) if normalized else None
+    user, via_restore = _lookup_sign_in_user(db, normalized, now=now)
     ok = False
-    if can_sign_in(user):
+    if user is not None and (can_sign_in(user) or (via_restore and _can_restore_sign_in(user))):
         ok, new_hash = passwords.verify_and_rehash(user.password_hash, password)
         if ok and new_hash is not None:
             user.password_hash = new_hash
@@ -97,12 +121,20 @@ def authenticate(db: Session, username: str, password: str, ip: str, *, now: dat
         for bucket, key, _limit, _window in checks:
             ratelimit.record_hit(db, bucket, key, now)
         raise InvalidCredentials("invalid username or password")
+    if via_restore:
+        try:
+            user = users.restore_identity(db, user=user, actor_type="user", actor_id=user.id, ip=ip, now=now)
+        except Conflict:
+            for bucket, key, _limit, _window in checks:
+                ratelimit.record_hit(db, bucket, key, now)
+            raise InvalidCredentials("invalid username or password") from None
     return user
 
 
 def _finish(db: Session, user: User, *, ip: str, pending_id: str | None, old_session_id: uuid.UUID | None,
             now: datetime) -> OnboardResult:
     """Success: count it against the per-address cap, issue the session, consume the pending action, audit."""
+    user.last_activity_at = now
     ratelimit.record_hit(db, ratelimit.LOGIN_SUCCESS_IP[0], ratelimit.ip_key(ip), now)
     result = start_session_and_record(db, user, pending_id=pending_id, old_session_id=old_session_id, now=now)
     audit.log(db, actor_type="user", actor_id=user.id, action="user.login", target_type="user", target_id=user.id,
@@ -135,10 +167,11 @@ def start_sign_in(*, username: str, password: str, ip: str, pending_id: str | No
     normalized = normalize_username(username)
     checks = _limit_checks(normalized, ip)
     user_id = stored_hash = None
+    via_restore = False
     with write_session() as db:
         _check_limits(db, checks, ip, now)
-        user = db.scalar(select(User).where(User.username_normalized == normalized)) if normalized else None
-        if can_sign_in(user):
+        user, via_restore = _lookup_sign_in_user(db, normalized, now=now)
+        if user is not None and (can_sign_in(user) or (via_restore and _can_restore_sign_in(user))):
             user_id, stored_hash = user.id, user.password_hash
         hit_ids = [ratelimit.record_hit(db, bucket, key, now) for bucket, key, _l, _w in checks]
     ok, new_hash = False, None
@@ -149,11 +182,19 @@ def start_sign_in(*, username: str, password: str, ip: str, pending_id: str | No
     result = None
     with write_session() as db:
         user = db.get(User, user_id) if ok and user_id is not None else None
-        if can_sign_in(user) and user.password_hash == stored_hash:
-            ratelimit.release_hits(db, hit_ids)
-            if new_hash is not None:
-                user.password_hash = new_hash
-            result = _finish(db, user, ip=ip, pending_id=pending_id, old_session_id=old_session_id, now=now)
+        usable = can_sign_in(user) or (via_restore and _can_restore_sign_in(user))
+        if usable and user is not None and user.password_hash == stored_hash:
+            try:
+                if via_restore:
+                    user = users.restore_identity(
+                        db, user=user, actor_type="user", actor_id=user.id, ip=ip, now=now
+                    )
+                ratelimit.release_hits(db, hit_ids)
+                if new_hash is not None:
+                    user.password_hash = new_hash
+                result = _finish(db, user, ip=ip, pending_id=pending_id, old_session_id=old_session_id, now=now)
+            except Conflict:
+                pass  # counted hits stay; looks like a wrong password
     if result is None:  # wrong password, or the account changed while we were hashing: the counted hits stay
         raise InvalidCredentials("invalid username or password")
     return result

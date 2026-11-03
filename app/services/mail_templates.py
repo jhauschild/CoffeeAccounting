@@ -96,3 +96,19 @@ def guest_approved(*, guest_username: str) -> tuple[str, str]:
 def guest_rejected(*, guest_username: str) -> tuple[str, str]:
     body = t("mail.guest_rejected.body", guest_username=_name(guest_username), signature=_signature())
     return t("mail.guest_rejected.subject"), body
+
+
+def account_deactivated(*, username: str, restore_until, reason: str = "admin") -> tuple[str, str]:
+    """Notice that an account was anonymized; includes the restore deadline and sign-in URL."""
+    from app.timeutil import format_local
+
+    inactive_note = t("mail.deactivate.inactive_extra") if reason == "inactive" else ""
+    body = t(
+        "mail.deactivate.body",
+        inactive_note=inactive_note,
+        username=_name(username),
+        restore_until=format_local(restore_until) if hasattr(restore_until, "isoformat") else str(restore_until),
+        signin_url=f"{_base()}/login",
+        signature=_signature(),
+    )
+    return t("mail.deactivate.subject"), body

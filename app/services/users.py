@@ -5,16 +5,26 @@ from __future__ import annotations
 import unicodedata
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app.models import DISPLAY_NAME_MAX, AdminUser, Chair, User, UserSession, effective_users
-from app.services import audit, sessions
+from app.config import get_settings
+from app.models import (
+    DISPLAY_NAME_MAX,
+    AdminUser,
+    AnonymizationCounter,
+    Chair,
+    User,
+    UserIdentityRestore,
+    UserSession,
+    effective_users,
+)
+from app.services import admin_auth, audit, sessions
 from app.services.authz import ensure_admin_can_access_user, require_global
 from app.services.errors import Conflict, Forbidden, InvalidInput, NotFound, UserInactive
-from app.timeutil import utcnow
+from app.timeutil import ensure_utc, utcnow
 
 ACTOR_USER = "user"
 ACTOR_ADMIN = "admin"
@@ -221,26 +231,288 @@ def update_profile(
     return user
 
 
-def set_user_status(db: Session, *, admin: AdminUser, user_id: uuid.UUID, active: bool, ip: str | None = None) -> User:
-    """Deactivate/reactivate (scope-checked). Sessions of inactive users stop resolving immediately.
+def get_identity_restore(db: Session, user_id: uuid.UUID, *, now: datetime | None = None) -> UserIdentityRestore | None:
+    """Non-expired restore stash for `user_id`, or None."""
+    now = ensure_utc(now) if now is not None else utcnow()
+    return db.scalar(
+        select(UserIdentityRestore).where(
+            UserIdentityRestore.user_id == user_id, UserIdentityRestore.expires_at > now
+        )
+    )
 
-    Deactivating a user linked to an ACTIVE group admin row (role "chair") needs a head admin
-    (`Forbidden` otherwise), mirroring `update_profile`: an inactive linked user kills the admin's
-    login, so a peer could otherwise lock a group admin out."""
+
+def get_identity_restore_by_username(
+    db: Session, username_normalized: str, *, now: datetime | None = None
+) -> UserIdentityRestore | None:
+    """Non-expired restore stash for an original login name, or None."""
+    if not username_normalized:
+        return None
+    now = ensure_utc(now) if now is not None else utcnow()
+    return db.scalar(
+        select(UserIdentityRestore).where(
+            UserIdentityRestore.username_normalized == username_normalized,
+            UserIdentityRestore.expires_at > now,
+        )
+    )
+
+
+def _next_alumni_index(db: Session) -> int:
+    row = db.get(AnonymizationCounter, "alumni")
+    if row is None:
+        row = AnonymizationCounter(name="alumni", value=0)
+        db.add(row)
+        db.flush()
+    row.value += 1
+    db.flush()
+    return int(row.value)
+
+
+def _revoke_linked_admin_sessions(db: Session, user_id: uuid.UUID, now: datetime) -> int:
+    revoked = 0
+    for admin_id in db.scalars(select(AdminUser.id).where(AdminUser.user_id == user_id)).all():
+        revoked += admin_auth.revoke_admin_sessions(db, admin_id, now=now)
+    return revoked
+
+
+def anonymize_deactivate(
+    db: Session,
+    *,
+    user: User,
+    reason: str,
+    actor_type: str,
+    actor_id: uuid.UUID | None = None,
+    ip: str | None = None,
+    now: datetime | None = None,
+    notify: bool = True,
+) -> tuple[User, object | None]:
+    """Anonymize display name / username / email, stash originals for restore, set inactive.
+
+    Returns `(user, mail_message_or_none)`. Callers send the message after commit (background or CLI).
+    `chair_id` and `password_hash` are kept. Idempotent if already inactive with a live stash.
+    """
+    from app.services import mail_templates
+    from app.services.mail import MailMessage, build_message
+
+    if reason not in ("self", "admin", "inactive"):
+        raise InvalidInput("invalid deactivation reason")
+    now = ensure_utc(now) if now is not None else utcnow()
+    if user.status == "merged":
+        raise Conflict("profile has been merged")
+
+    existing = get_identity_restore(db, user.id, now=now)
+    if user.status == "inactive" and existing is not None:
+        return user, None
+    if (
+        user.status == "inactive"
+        and existing is None
+        and user.username_normalized
+        and user.username_normalized.startswith("alumni-")
+    ):
+        return user, None  # already anonymized and restore window expired
+
+    settings = get_settings()
+    expires_at = now + timedelta(days=settings.identity_restore_days)
+    has_login = bool(user.username and user.username_normalized)
+    mail_msg: MailMessage | None = None
+    if notify and has_login:
+        to = user.email
+        if to is None and user.sponsor_id is not None:
+            sponsor = db.get(User, user.sponsor_id)
+            to = sponsor.email if sponsor is not None else None
+        if to:
+            subject, body = mail_templates.account_deactivated(
+                username=user.username, restore_until=expires_at, reason=reason
+            )
+            mail_msg = build_message(to=to, subject=subject, body=body)
+
+    if existing is not None:
+        db.delete(existing)
+        db.flush()
+
+    if has_login:
+        db.add(
+            UserIdentityRestore(
+                user_id=user.id,
+                display_name=user.display_name,
+                username=user.username,
+                username_normalized=user.username_normalized,
+                email=user.email,
+                reason=reason,
+                created_at=now,
+                expires_at=expires_at,
+            )
+        )
+        db.flush()
+
+    n = _next_alumni_index(db)
+    display = f"Alumni {n}"
+    user.display_name = display
+    user.normalized_name = normalize_name(display)
+    if has_login:
+        user.username = f"alumni-{n}"
+        user.username_normalized = f"alumni-{n}"
+        if user.account_kind == "member":
+            user.email = f"anonymous-{n}@example.org"
+    user.status = "inactive"
+    db.flush()
+
+    sessions_revoked = sessions.revoke_user_sessions(db, user.id, now)
+    admin_revoked = _revoke_linked_admin_sessions(db, user.id, now)
+    audit.log(
+        db,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        action="user.deactivated",
+        target_type="user",
+        target_id=user.id,
+        metadata={
+            "anonymized": True,
+            "reason": reason,
+            "restore_until": expires_at.isoformat(),
+            "sessions_revoked": sessions_revoked,
+            "admin_sessions_revoked": admin_revoked,
+        },
+        ip=ip,
+        now=now,
+    )
+    return user, mail_msg
+
+
+def restore_identity(
+    db: Session,
+    *,
+    user: User,
+    actor_type: str,
+    actor_id: uuid.UUID | None = None,
+    ip: str | None = None,
+    now: datetime | None = None,
+) -> User:
+    """Put back stashed name/username/email, set active, delete the stash. Raises `Conflict` if taken."""
+    now = ensure_utc(now) if now is not None else utcnow()
+    stash = get_identity_restore(db, user.id, now=now)
+    if stash is None:
+        raise NotFound("no identity restore available")
+
+    clash_user = db.scalar(
+        select(User.id).where(
+            User.id != user.id,
+            User.username_normalized == stash.username_normalized,
+        )
+    )
+    if clash_user is not None:
+        raise Conflict("username is already in use")
+    if stash.email:
+        clash_email = db.scalar(select(User.id).where(User.id != user.id, User.email == stash.email))
+        if clash_email is not None:
+            raise Conflict("email is already in use")
+
+    user.display_name = stash.display_name
+    user.normalized_name = normalize_name(stash.display_name)
+    user.username = stash.username
+    user.username_normalized = stash.username_normalized
+    if user.account_kind == "member":
+        user.email = stash.email
+    user.status = "active"
+    user.last_activity_at = now
+    db.delete(stash)
+    db.flush()
+    audit.log(
+        db,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        action="user.reactivated",
+        target_type="user",
+        target_id=user.id,
+        metadata={"restored_identity": True},
+        ip=ip,
+        now=now,
+    )
+    return user
+
+
+def set_user_status(
+    db: Session,
+    *,
+    admin: AdminUser,
+    user_id: uuid.UUID,
+    active: bool,
+    ip: str | None = None,
+    now: datetime | None = None,
+    notify: bool = True,
+) -> tuple[User, object | None]:
+    """Deactivate (anonymize) or reactivate (restore if possible). Returns `(user, mail_or_none)`.
+
+    Deactivating a user linked to an ACTIVE group admin row (role "chair") needs a head admin.
+    """
     ensure_admin_can_access_user(db, admin, user_id)
     user = get_user(db, user_id)
     if user.status == "merged":
         raise Conflict("profile has been merged")
-    if not active and admin.role != "global" and _is_active_group_admin(db, user.id):
-        raise Forbidden("only a head admin may deactivate a group admin's profile")
-    new_status = "active" if active else "inactive"
-    if user.status != new_status:
-        user.status = new_status
+    now = ensure_utc(now) if now is not None else utcnow()
+    if not active:
+        if admin.role != "global" and _is_active_group_admin(db, user.id):
+            raise Forbidden("only a head admin may deactivate a group admin's profile")
+        return anonymize_deactivate(
+            db,
+            user=user,
+            reason="admin",
+            actor_type=ACTOR_ADMIN,
+            actor_id=admin.id,
+            ip=ip,
+            now=now,
+            notify=notify,
+        )
+    if get_identity_restore(db, user.id, now=now) is not None:
+        return restore_identity(
+            db, user=user, actor_type=ACTOR_ADMIN, actor_id=admin.id, ip=ip, now=now
+        ), None
+    if user.status != "active":
+        user.status = "active"
+        user.last_activity_at = now
         db.flush()
-        audit.log(db, actor_type="admin", actor_id=admin.id,
-                  action="user.reactivated" if active else "user.deactivated",
-                  target_type="user", target_id=user.id, ip=ip)
-    return user
+        audit.log(
+            db,
+            actor_type=ACTOR_ADMIN,
+            actor_id=admin.id,
+            action="user.reactivated",
+            target_type="user",
+            target_id=user.id,
+            ip=ip,
+            now=now,
+        )
+    return user, None
+
+
+def self_deactivate(
+    db: Session, *, user: User, ip: str | None = None, now: datetime | None = None
+) -> tuple[User, object | None]:
+    """Signed-in account deactivates itself (anonymizing). Group admins must be demoted first."""
+    if _is_active_group_admin(db, user.id):
+        raise Forbidden("a group admin cannot deactivate their own account; ask a head admin to remove the role first")
+    return anonymize_deactivate(
+        db, user=user, reason="self", actor_type=ACTOR_USER, actor_id=user.id, ip=ip, now=now, notify=True
+    )
+
+
+def list_inactive_due(db: Session, *, now: datetime | None = None) -> list[User]:
+    """Active accounts with no activity for `INACTIVE_ACCOUNT_DAYS` (login or coffee)."""
+    now = ensure_utc(now) if now is not None else utcnow()
+    cutoff = now - timedelta(days=get_settings().inactive_account_days)
+    activity = func.coalesce(User.last_activity_at, User.created_at)
+    return list(
+        db.scalars(
+            select(User).where(
+                User.status == "active",
+                User.account_kind.in_(("member", "guest")),
+                activity < cutoff,
+            )
+        ).all()
+    )
+
+
+def purge_expired_identity_restores(db: Session, *, now: datetime | None = None) -> int:
+    now = ensure_utc(now) if now is not None else utcnow()
+    return db.execute(delete(UserIdentityRestore).where(UserIdentityRestore.expires_at < now)).rowcount
 
 
 def merge_users(

@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     reset_ttl_minutes: int = 60
     password_min_length: int = 10
     stepup_window_seconds: int = 300
+    # How long original name/email/username can be restored after anonymizing deactivation.
+    identity_restore_days: int = 90
+    # Auto-deactivate active accounts with no activity (login or coffee) for this many days.
+    inactive_account_days: int = 180
     # None = default by environment (true in production, false otherwise); resolved in `_validate`.
     balance_totp_required: bool | None = None
 
@@ -231,7 +235,8 @@ class Settings(BaseSettings):
                 errors.append("ALLOWED_EMAIL_DOMAINS entries must be domains such as tum.de or *.tum.de")
                 break
         for name in ("mail_max_per_hour", "verification_ttl_hours", "guest_approval_ttl_days", "reset_ttl_minutes",
-                     "stepup_window_seconds", "argon2_time_cost", "argon2_parallelism"):
+                     "stepup_window_seconds", "identity_restore_days", "inactive_account_days",
+                     "argon2_time_cost", "argon2_parallelism"):
             if getattr(self, name) < 1:
                 errors.append(f"{name.upper()} must be at least 1")
         if self.argon2_memory_cost_kib < 8 * max(self.argon2_parallelism, 1):

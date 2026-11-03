@@ -85,7 +85,8 @@ def test_revocation_and_inactive_or_merged_users(db, user, chair, global_admin):
     with read_session() as r:
         assert sessions.resolve_session(r, raw3) is None
     with write_session() as w:
-        assert sessions.revoke_user_sessions(w, user.id) == 1
+        # Deactivation already revoked the remaining sessions; nothing left to revoke.
+        assert sessions.revoke_user_sessions(w, user.id) == 0
 
 
 # ----- pending actions ------------------------------------------------------------------------

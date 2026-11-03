@@ -130,11 +130,16 @@ def test_concurrent_consumers_of_one_pending_action_record_once(db, chair, price
 
 # ----- deactivation between pending creation and sign-in -------------------------------------
 def test_deactivated_account_cannot_sign_in_and_pending_stays_unconsumed(client, db, chair, price, global_admin):
+    """After the restore window is gone, the original login name fails and the pending coffee stays."""
     account = make_account(db, "Soon Gone", chair)
+    original_username = account.username
     post_scan(client, "single")
     with write_session() as w:
         users.set_user_status(w, admin=w.get(type(global_admin), global_admin.id), user_id=account.id, active=False)
-    r = sign_in(client, account)
+        stash = users.get_identity_restore(w, account.id)
+        stash.expires_at = utcnow() - timedelta(seconds=1)
+        users.purge_expired_identity_restores(w)
+    r = sign_in(client, original_username)
     assert r.status_code == 401
     db.rollback()
     assert events(db) == [] and db.scalars(select(PendingAction)).one().consumed_at is None
