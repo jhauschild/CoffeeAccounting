@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     reset_ttl_minutes: int = 60
     password_min_length: int = 10
     stepup_window_seconds: int = 300
+    # How long original name/email/username can be restored after anonymizing deactivation.
+    identity_restore_days: int = 90
+    # Auto-deactivate active accounts with no activity (login or coffee) for this many days.
+    inactive_account_days: int = 180
+    # Address for balance escalation when a chair has no active group admin (deactivation with
+    # non-zero balance). Empty = skip that mail (deactivation still proceeds).
+    head_admin_notify_email: str = ""
     # None = default by environment (true in production, false otherwise); resolved in `_validate`.
     balance_totp_required: bool | None = None
 
@@ -231,13 +238,22 @@ class Settings(BaseSettings):
                 errors.append("ALLOWED_EMAIL_DOMAINS entries must be domains such as tum.de or *.tum.de")
                 break
         for name in ("mail_max_per_hour", "verification_ttl_hours", "guest_approval_ttl_days", "reset_ttl_minutes",
-                     "stepup_window_seconds", "argon2_time_cost", "argon2_parallelism"):
+                     "stepup_window_seconds", "identity_restore_days", "inactive_account_days",
+                     "argon2_time_cost", "argon2_parallelism"):
             if getattr(self, name) < 1:
                 errors.append(f"{name.upper()} must be at least 1")
         if self.argon2_memory_cost_kib < 8 * max(self.argon2_parallelism, 1):
             errors.append("ARGON2_MEMORY_COST_KIB must be at least 8 per lane (ARGON2_PARALLELISM)")
         if not 1 <= self.password_min_length <= 128:
             errors.append("PASSWORD_MIN_LENGTH must be between 1 and 128")
+        if self.head_admin_notify_email.strip():
+            from app.services.errors import InvalidInput
+            from app.services.mail import normalize_address
+
+            try:
+                self.head_admin_notify_email = normalize_address(self.head_admin_notify_email)
+            except InvalidInput:
+                errors.append("HEAD_ADMIN_NOTIFY_EMAIL must be a plain email address when set")
 
         if self.is_production:
             if self.mail_backend != "smtp":

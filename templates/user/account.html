@@ -77,4 +77,17 @@
     <button type="submit" class="button-secondary button-block">{{ t("user.account.leave") }}</button>
   </form>
 </section>
+<section class="card" id="deactivate">
+  <h2>{{ t("user.account.deactivate_title") }}</h2>
+  <p class="muted">{{ t("user.account.deactivate_hint") }}</p>
+  {% if errors.deactivate %}<p class="error" role="alert">{{ t(errors.deactivate) }}</p>{% endif %}
+  <form method="post" action="/account/deactivate">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="checkbox" for="deactivate_confirm">
+      <input id="deactivate_confirm" name="confirm" type="checkbox" value="1" required>
+      {{ t("user.account.deactivate_confirm") }}
+    </label>
+    <button type="submit" class="button-danger button-block">{{ t("user.account.deactivate_submit") }}</button>
+  </form>
+</section>
 {% endblock %}

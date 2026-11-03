@@ -80,7 +80,8 @@ POLICY = {
     ("GET", "/privacy"): "public",
     ("GET", "/"): "public", ("HEAD", "/"): "public",
     ("GET", "/account"): "user", ("GET", "/account/edit"): "user", ("POST", "/account/edit"): "user",
-    ("POST", "/account/password"): "user", ("POST", "/logout"): "user",
+    ("POST", "/account/password"): "user", ("POST", "/account/deactivate"): "user",
+    ("POST", "/logout"): "user",
     ("GET", "/coffee/{kind}"): "public", ("POST", "/coffee/{kind}"): "scantoken",
     ("GET", "/coffee/done/{event_id}"): "user", ("POST", "/coffee/undo/{event_id}"): "user",
     ("GET", "/overview"): "user", ("GET", "/overview/chairs"): "user", ("GET", "/overview/people"): "user",
@@ -134,6 +135,7 @@ FORM = {
     "/account/edit": {"display_name": "Pwned", "chair_id": "{chair_b}"},
     "/account/password": {"current_password": "x" * 12, "password": "a-long-enough-password",
                           "password2": "a-long-enough-password"},
+    "/account/deactivate": {"confirm": "1"},
     "/logout": {}, "/coffee/{kind}": {"token": "forged"}, "/coffee/undo/{event_id}": {},
     "/admin/login": {"username": "nobody", "password": "x" * 12},
     "/admin/logout": {}, "/admin/totp/setup": {"code": "000000"},
@@ -403,6 +405,16 @@ def main():
                     rows.append((method, path, tname, who, variant, r.status_code, v, "changed" if changed else "-", ok))
                     if path == "/admin/logout" and who in ("ga", "head") and variant == "csrf":
                         ok = v == "redirect-login"  # logout succeeds: session revoked, back to the login page
+                    # Self-deactivate anonymizes `me` and kills sessions; put the principal back for later probes.
+                    if path == "/account/deactivate" and who == "user" and variant == "csrf" and r.status_code == 303:
+                        from app.models import User
+                        from app.services import users as users_svc
+                        with write_session() as w:
+                            u = w.get(User, ids["me"])
+                            if users_svc.get_identity_restore(w, u.id) is not None:
+                                users_svc.restore_identity(w, user=u, actor_type="system")
+                            elif u.status != "active":
+                                u.status = "active"
                     if not ok:
                         failures.append({"probe": cfg_key, "who": who, "variant": variant, "status": r.status_code,
                                          "verdict": v, "db_changed": changed, "rule": why,

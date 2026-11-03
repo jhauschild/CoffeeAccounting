@@ -160,8 +160,8 @@ def test_readme_cli_examples_match_the_real_parser():
         argv = [a for a in argv if not a.endswith("]") or not a.startswith("[")]
         args = parser.parse_args(argv)  # raises SystemExit on an unknown command or flag
         seen.add(args.command)
-    assert {"create-admin", "set-price", "check-ledger", "purge-expired", "qr", "list-admins", "setup",
-            "setup-mail", "mail-status", "test-mail", "clear-mail"} <= seen
+    assert {"create-admin", "set-price", "check-ledger", "purge-expired", "deactivate-inactive", "qr",
+            "list-admins", "setup", "setup-mail", "mail-status", "test-mail", "clear-mail"} <= seen
     for name in ("reset-admin-password", "reset-admin-totp", "disable-admin", "bootstrap-admin"):
         assert name in readme
 

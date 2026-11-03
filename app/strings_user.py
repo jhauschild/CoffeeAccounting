@@ -234,6 +234,21 @@ STRINGS: dict[str, str] = {
     "user.account.payment_correction": "(correction)",
     "user.account.leave": "Remove this browser",
     "user.account.leave_hint": "Signs this browser out. Your account and ledger are kept; you can sign in again at any time.",
+    "user.account.deactivate_title": "Deactivate account",
+    "user.account.deactivate_hint": (
+        "Your display name on the open site becomes an anonymous Alumni label. Your username and e-mail are "
+        "cleared from the account so they can be used by a new registration. Your {chair_label}, password and "
+        "ledger history stay. For 90 days you can restore everything by signing in with the same username and "
+        "password. After that the original name and e-mail cannot be restored. If you still owe money or have "
+        "credit, settlement mails go to you and the group admins. Group admins must ask a head admin to remove "
+        "the role first."
+    ),
+    "user.account.deactivate_confirm": "I understand my name will be anonymized and want to deactivate this account",
+    "user.account.deactivate_submit": "Deactivate my account",
+    "user.account.error_deactivate_confirm": "Please confirm that you want to deactivate the account.",
+    "user.account.error_deactivate_admin": (
+        "A group admin cannot deactivate this account. Ask a head admin to remove the group-admin role first."
+    ),
     "user.account.notice_password": "Your password has been changed. Your other browsers have been signed out.",
     "user.account.notice_saved": "Your profile has been saved.",
     "user.account.notice_registered": "Your account is ready. Scan the QR code to record a coffee.",
@@ -294,5 +309,11 @@ STRINGS: dict[str, str] = {
     "user.privacy.retention_title": "Retention",
     "user.privacy.contact_title": "Contact",
     "user.privacy.contact_none": "Please ask the person who runs the coffee machine accounts.",
-    "user.privacy.removal": "An account can only be deactivated by an administrator. Ledger entries are not deleted.",
+    "user.privacy.removal": (
+        "You can deactivate your account under My account, or an administrator can do it. Deactivation "
+        "anonymizes the display name (Alumni N) and clears the login name and e-mail from the account; the "
+        "ledger UUID, {chair_label} and history stay. For 90 days you can restore the original identity by "
+        "signing in with the same username and password (or an administrator can restore it). After that the "
+        "original name and e-mail cannot be restored. Ledger entries and the audit log are never deleted."
+    ),
 }

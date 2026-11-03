@@ -1,7 +1,8 @@
 """Command line interface: `python -m app.cli <command>`.
 
-Commands here: check-ledger, set-price, purge-expired. Admin management commands are
-registered by `app.cli_admin.register(subparsers)` (each sub-parser sets `func(args) -> int`).
+Commands here: check-ledger, set-price, purge-expired, deactivate-inactive. Admin management
+commands are registered by `app.cli_admin.register(subparsers)` (each sub-parser sets
+`func(args) -> int`).
 """
 
 from __future__ import annotations
@@ -15,11 +16,12 @@ from sqlalchemy import delete, or_
 
 from app.db import read_session, write_session
 from app.models import (AdminSession, PasswordResetToken, PendingAction, PendingRegistration, RateLimitEvent,
-                        UserSession)
+                        User, UserSession)
 from app.money import format_money
-from app.services import audit
+from app.services import audit, users
 from app.services.checker import check_ledger
 from app.services.errors import ServiceError
+from app.services.mail import send_in_background
 from app.services.prices import add_price
 from app.timeutil import format_local, parse_iso_datetime, utcnow
 
@@ -77,8 +79,36 @@ def cmd_purge_expired(args) -> int:
         counts["rate_limit_events"] = db.execute(
             delete(RateLimitEvent).where(RateLimitEvent.created_at < now - RATE_LIMIT_RETENTION)
         ).rowcount
+        counts["identity_restores"] = users.purge_expired_identity_restores(db, now=now)
         audit.log(db, actor_type="system", action="maintenance.purge_expired", metadata=counts, now=now)
     print("Purged: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    return 0
+
+
+def cmd_deactivate_inactive(args) -> int:
+    """Anonymize-deactivate accounts with no login/coffee activity for INACTIVE_ACCOUNT_DAYS."""
+    with read_session() as db:
+        due = list(users.list_inactive_due(db))
+        due_ids = [u.id for u in due]
+        if args.dry_run:
+            for u in due:
+                print(f"would deactivate {u.id} ({u.username or u.display_name})")
+            print(f"Would deactivate {len(due_ids)} inactive account(s)")
+            return 0
+    done = 0
+    for uid in due_ids:
+        messages = []
+        with write_session() as db:
+            user = db.get(User, uid)
+            if user is None or user.status != "active":
+                continue
+            _user, messages = users.anonymize_deactivate(
+                db, user=user, reason="inactive", actor_type="system", notify=True
+            )
+            done += 1
+        for message in messages:
+            send_in_background(message, message.to)
+    print(f"Deactivated {done} inactive account(s)")
     return 0
 
 
@@ -95,8 +125,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", help="optional note")
     p.set_defaults(func=cmd_set_price)
 
-    p = sub.add_parser("purge-expired", help="delete expired sessions, pending actions, expired or used registration and reset links, old rate-limit rows")
+    p = sub.add_parser(
+        "purge-expired",
+        help="delete expired sessions, pending actions, expired identity restores, expired or used "
+             "registration and reset links, old rate-limit rows",
+    )
     p.set_defaults(func=cmd_purge_expired)
+
+    p = sub.add_parser(
+        "deactivate-inactive",
+        help="anonymize-deactivate accounts with no login or coffee activity for INACTIVE_ACCOUNT_DAYS",
+    )
+    p.add_argument("--dry-run", action="store_true", help="list due accounts without changing anything")
+    p.set_defaults(func=cmd_deactivate_inactive)
 
     try:
         cli_admin = importlib.import_module("app.cli_admin")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request
 from starlette.responses import Response
 
 from app.db import read_session, write_session
@@ -14,6 +14,7 @@ from app.money import format_amount
 from app.services import authz, exports, ledger, roles, sessions, stats, users
 from app.services import audit
 from app.services.errors import InvalidInput, NotFound, ServiceError
+from app.services.mail import send_in_background
 from app.web import admin_deps as ad
 from app.web.deps import Redirect, client_ip, parse_uuid
 from app.web.middleware import no_store
@@ -138,10 +139,12 @@ def user_detail(request: Request, uid: uuid.UUID = Depends(ad.admin_user_access)
         # Only payments this admin may correct (ledger rule: the collector or a head admin; bookkeeping: head only).
         uncorrected = [p for p in detail.payments if not p.corrected
                        and (ctx.is_global or p.payment.collector_admin_id == ctx.admin.id)]
+        restore = users.get_identity_restore(db, detail.user.id)
         return ad.page(request, ctx, "admin/user_detail.html",
                        {"detail": detail, "chairs": chairs, "unit_cents": unit, "note_max": NOTE_MAX,
                         "unit_price_plain": format_amount(unit) if unit is not None else "",
                         "uncorrected": uncorrected,
+                        "identity_restore": restore,
                         "role": roles.role_info(db, detail.user) if ctx.is_global else None})
 
 
@@ -219,15 +222,21 @@ def change_chair(request: Request, chair_id: str = Form("", max_length=40),
 
 
 @router.post("/users/{user_id}/status", dependencies=[Depends(ad.require_admin_csrf)])
-def change_status(request: Request, active: str = Form("", max_length=1),
+def change_status(request: Request, background_tasks: BackgroundTasks, active: str = Form("", max_length=1),
                   uid: uuid.UUID = Depends(ad.admin_user_access), ctx: ad.AdminContext = Depends(ad.require_admin)):
     if active not in ("0", "1"):
         raise NotFound("unknown action")
-
-    def run(db):
-        users.set_user_status(db, admin=ctx.admin, user_id=uid, active=active == "1", ip=client_ip(request))
-
-    return _act(request, uid, ctx, run, ok="user_reactivated" if active == "1" else "user_deactivated")
+    messages = []
+    try:
+        with write_session() as db:
+            _user, messages = users.set_user_status(
+                db, admin=ctx.admin, user_id=uid, active=active == "1", ip=client_ip(request)
+            )
+    except ServiceError as exc:
+        return ad.back(_detail_path(uid), err=ad.error_key(exc))
+    for message in messages:
+        background_tasks.add_task(send_in_background, message, message.to)
+    return ad.back(_detail_path(uid), msg="user_reactivated" if active == "1" else "user_deactivated")
 
 
 @router.post("/users/{user_id}/sessions/revoke", dependencies=[Depends(ad.require_admin_csrf)])

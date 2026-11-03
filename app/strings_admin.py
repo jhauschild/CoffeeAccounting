@@ -146,8 +146,22 @@ STRINGS: dict[str, str] = {
     "admin.detail.rename": "Display name",
     "admin.detail.rename_submit": "Save name",
     "admin.detail.deactivate": "Deactivate profile",
-    "admin.detail.deactivate_hint": "The person can no longer record coffees. The history is kept.",
+    "admin.detail.deactivate_hint": (
+        "Anonymizes the display name to Alumni N, clears the login name and e-mail for public use, and "
+        "revokes sessions. For 90 days the original identity can be restored here or by signing in with the "
+        "old username and password. The {chair_label} and ledger stay. History is kept. A non-zero balance "
+        "triggers settlement mails to the person and the group admins (or the head-admin notify address if "
+        "the {chair_label} has no group admin)."
+    ),
     "admin.detail.reactivate": "Reactivate profile",
+    "admin.detail.reactivate_hint": (
+        "Marks the profile active again. The original name cannot be restored (the restore window has expired)."
+    ),
+    "admin.detail.restore_identity": "Restore identity and reactivate",
+    "admin.detail.restore_hint": (
+        "Puts back the original display name, username and e-mail, and marks the profile active. "
+        "Available until {until}."
+    ),
     "admin.detail.revoke_sessions": "Sign out all browsers ({n} active)",
     "admin.detail.change_chair": "{chair_label}",
     "admin.detail.change_chair_submit": "Change {chair_label}",

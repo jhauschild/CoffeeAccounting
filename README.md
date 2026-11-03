@@ -151,6 +151,9 @@ Set in `.env` (see `.env.example`, which documents each one). The defaults are t
 | `SECRET_KEY` | dev value | signs tokens and cookies and derives the mail-login key; random, at least 32 characters in production; changing it makes the stored mail login unreadable (run `setup-mail` again) and invalidates admin recovery codes |
 | `TRUSTED_PROXY_IPS` | empty | IPs/CIDRs whose `X-Forwarded-*` are trusted; set it behind a proxy, otherwise all visitors share one rate-limit bucket (see [step 4](#4-trusted-proxy-addresses)) |
 | `SESSION_LIFETIME_DAYS` | `180` | user browser session lifetime |
+| `IDENTITY_RESTORE_DAYS` | `90` | restore window after anonymizing deactivation |
+| `INACTIVE_ACCOUNT_DAYS` | `180` | auto-deactivate after this much inactivity |
+| `HEAD_ADMIN_NOTIFY_EMAIL` | empty | balance escalation when a chair has no group admin |
 | `ADMIN_SESSION_HOURS` | `12` | admin session lifetime |
 | `ADMIN_BOOTSTRAP_USERNAME`, `ADMIN_BOOTSTRAP_PASSWORD` | empty | creates the first head admin at start, ignored once any admin exists; `setup` is the preferred way |
 | `LOCAL_TIMEZONE` | `Europe/Berlin` | display and day/week/month boundaries (weeks start Monday) |
@@ -346,9 +349,13 @@ If mails stop later, the dashboard banner and `mail-status` show the failure cat
 ## Day-to-day operations
 
 - **Logs:** stdout (`docker compose logs -f app`), level via `LOG_LEVEL`. The application logs each request itself, with one-time tokens redacted.
-- **Purge expired sessions, pending scans, expired or used registration and reset links and old rate-limit rows** (database growth is small; weekly is plenty), for example from cron:
+- **Purge expired sessions, pending scans, expired identity restores, expired or used registration and reset links and old rate-limit rows** (database growth is small; weekly is plenty), for example from cron:
   ```bash
   docker compose run --rm app python -m app.cli purge-expired
+  ```
+- **Deactivate inactive accounts** (anonymize after `INACTIVE_ACCOUNT_DAYS` with no login or coffee; mails the restore deadline first). Weekly is enough next to purge:
+  ```bash
+  docker compose run --rm app python -m app.cli deactivate-inactive
   ```
 - **Check ledger integrity** (exit code 1 on problems; also useful after a restore; includes group balance, remittance and correction rules):
   ```bash
@@ -429,7 +436,7 @@ Read the release notes and `.env.example` for new variables first. If something 
 - Identity is a verified TUM email (members) or a member's vouching (guests), plus a password. It does not prove the user's real-world identity (see [Trust and identity model](#trust-and-identity-model)).
 - **Single process:** run exactly one app process (one uvicorn worker, one container). SQLite's single write lock and the in-process mail status assume it. Do not scale out and do not raise `--workers`.
 - **Cookie jars:** phone cameras, in-app QR scanners and home-screen web apps may use a different cookie jar than the browser where the user signed in, so the scan looks like a new browser. The recovery path is to sign in (`/login`): the scanned coffee is kept for one hour and recorded after sign-in. A member who confirms the email link in a different browser than the scan loses a coffee scanned before registering after one hour and scans again; registration never records a coffee.
-- **No erasure tooling.** Deactivating an account is the only removal mechanism; ledger rows and the audit log are append-only and are not deleted or anonymized. `/privacy` says so.
+- **No full erasure.** Deactivation (self-service, admin, or the inactivity job) anonymizes the public display name to `Alumni N` and clears username/email from the live account; ledger rows, UUIDs, chair association and the audit log stay. Original identity can be restored for `IDENTITY_RESTORE_DAYS` (default 90) via admin or by signing in with the old username and password; after that `purge-expired` drops the stash and restoration is impossible. A non-zero balance triggers settlement mails (person + group admins; or `HEAD_ADMIN_NOTIFY_EMAIL` when the chair has no group admin). `/privacy` says so.
 - **Duplicate people:** different TUM aliases can create two accounts for one person; this cannot be detected automatically. Admins can merge them (balance-changing action, step-up applies).
 - **The mail login is not in backups.** A restore onto a new server, or a changed `SECRET_KEY`, needs `setup-mail` again. Until then registration and recovery pages say "temporarily unavailable".
 - **Shared sponsor trust:** a sponsor receives every reset mail of their guests and could use such a link themselves. This is accepted as part of vouching; the head admin can reassign a guest to another sponsor.
@@ -441,4 +448,4 @@ Read the release notes and `.env.example` for new variables first. If something 
 
 ## Out of scope
 
-Erasure or anonymization tooling, a public JSON API, API keys, passkeys or SSO, mail other than the registration, approval and reset mails (no balance reminders), self-service change of username or email address, per-user data export, cached aggregates, PostgreSQL deployment, payment processing, and separate prices for single and double (a double is always 2 x the per-shot price). None of these is built; the design (identity separate from the ledger, integer cents, immutable events) does not make them impossible.
+Full erasure of ledger or audit rows, a public JSON API, API keys, passkeys or SSO, mail other than registration, approval, reset and deactivation notices (no balance reminders), self-service change of username or email address, per-user data export, cached aggregates, PostgreSQL deployment, payment processing, and separate prices for single and double (a double is always 2 x the per-shot price). None of these is built; the design (identity separate from the ledger, integer cents, immutable events) does not make them impossible.

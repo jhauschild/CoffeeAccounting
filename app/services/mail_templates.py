@@ -96,3 +96,72 @@ def guest_approved(*, guest_username: str) -> tuple[str, str]:
 def guest_rejected(*, guest_username: str) -> tuple[str, str]:
     body = t("mail.guest_rejected.body", guest_username=_name(guest_username), signature=_signature())
     return t("mail.guest_rejected.subject"), body
+
+
+def account_deactivated(*, username: str, restore_until, reason: str = "admin") -> tuple[str, str]:
+    """Notice that an account was anonymized; includes the restore deadline and sign-in URL."""
+    from app.timeutil import format_local
+
+    inactive_note = t("mail.deactivate.inactive_extra") if reason == "inactive" else ""
+    body = t(
+        "mail.deactivate.body",
+        inactive_note=inactive_note,
+        username=_name(username),
+        restore_until=format_local(restore_until) if hasattr(restore_until, "isoformat") else str(restore_until),
+        signin_url=f"{_base()}/login",
+        signature=_signature(),
+    )
+    return t("mail.deactivate.subject"), body
+
+
+def deactivate_please_pay(*, username: str, amount: str, contacts: str) -> tuple[str, str]:
+    body = t(
+        "mail.deactivate_please_pay.body",
+        username=_name(username),
+        amount=amount,
+        contacts=contacts,
+        signature=_signature(),
+    )
+    return t("mail.deactivate_please_pay.subject"), body
+
+
+def deactivate_has_credit(*, username: str, amount: str, contacts: str) -> tuple[str, str]:
+    body = t(
+        "mail.deactivate_has_credit.body",
+        username=_name(username),
+        amount=amount,
+        contacts=contacts,
+        signature=_signature(),
+    )
+    return t("mail.deactivate_has_credit.subject"), body
+
+
+def deactivate_collect_owed(
+    *, display_name: str, username: str, chair_name: str, amount: str, admin_url: str
+) -> tuple[str, str]:
+    body = t(
+        "mail.deactivate_collect_owed.body",
+        display_name=_name(display_name),
+        username=_name(username),
+        chair_name=_name(chair_name),
+        amount=amount,
+        admin_url=admin_url,
+        signature=_signature(),
+    )
+    return t("mail.deactivate_collect_owed.subject"), body
+
+
+def deactivate_no_group_admin(
+    *, display_name: str, username: str, chair_name: str, amount: str, balance_kind: str, admin_url: str
+) -> tuple[str, str]:
+    body = t(
+        "mail.deactivate_no_group_admin.body",
+        display_name=_name(display_name),
+        username=_name(username),
+        chair_name=_name(chair_name),
+        amount=amount,
+        balance_kind=balance_kind,
+        admin_url=admin_url,
+        signature=_signature(),
+    )
+    return t("mail.deactivate_no_group_admin.subject"), body
