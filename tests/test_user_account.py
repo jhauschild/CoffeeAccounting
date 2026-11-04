@@ -54,12 +54,31 @@ def test_done_page_shows_credit_for_negative_balance(client, db, user, global_ad
     login(user)
     page = client.get(scan(client).headers["location"]).text
     assert "Credit: €4.50" in page and "€5.00" in page and "Outstanding" not in page
+    assert "coffees in debt" not in page
 
 
 def test_total_balance_positive_when_owing(client, db, user, price, login):
     login(user)
     page = client.get(scan(client).headers["location"]).text
     assert "Credit" not in page and "Outstanding: €0.50" in page
+    assert "coffees in debt" not in page
+
+
+def test_done_page_debt_reminder_at_threshold(client, db, user, price, login):
+    # price fixture is 50¢/shot; 99 seeded singles + one scan → exactly 100 shots owed
+    factories.add_events(db, user, ["single"] * 99)
+    login(user)
+    page = client.get(scan(client, "single").headers["location"]).text
+    assert "100 coffees in debt" in page
+    assert "please settle your balance sometime soon" in page
+
+
+def test_done_page_no_debt_reminder_just_under_threshold(client, db, user, price, login):
+    factories.add_events(db, user, ["single"] * 98)
+    login(user)
+    page = client.get(scan(client, "single").headers["location"]).text
+    assert "Outstanding: €49.50" in page  # 99 × 50¢
+    assert "coffees in debt" not in page
 
 
 # ----- undo -----------------------------------------------------------------------------------

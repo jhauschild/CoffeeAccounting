@@ -188,6 +188,9 @@ STRINGS: dict[str, str] = {
     "user.done.time": "Time",
     "user.done.undo": "Undo this coffee",
     "user.done.undo_hint": "You can undo this coffee for a short time after recording it.",
+    "user.done.debt_reminder": (
+        "Hey, you're {n} coffees in debt – please settle your balance sometime soon."
+    ),
     "user.done.account": "My account and totals",
     "user.done.site": "Overview of the department",
     # Totals

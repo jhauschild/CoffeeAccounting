@@ -140,7 +140,8 @@ def done_page(request: Request, event_id: str, ctx: UserContext = Depends(deps.r
     totals = ledger.get_totals(db, ctx.user.id)
     return render(request, "user/done.html", {
         "event": view, "totals": totals, "headline": user_views.headline(totals.balance_cents),
-        "month_shots": user_views.month_shots(db, ctx.user.id)})
+        "month_shots": user_views.month_shots(db, ctx.user.id),
+        "debt_shots": user_views.debt_reminder_shots(db, totals.balance_cents)})
 
 
 @router.post("/coffee/undo/{event_id}", dependencies=[Depends(deps.require_csrf)])

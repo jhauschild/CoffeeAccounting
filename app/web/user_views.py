@@ -11,11 +11,14 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import COFFEE_KINDS, AdminUser, Chair, ConsumptionEvent, PaymentEvent
 from app.money import format_money
-from app.services import chairs, ledger, mail_credentials, overview, pending
+from app.services import chairs, ledger, mail_credentials, overview, pending, prices
 from app.services.ledger import Totals
 from app.strings import t
 from app.timeutil import format_local
 from app.web import deps
+
+# Show a settle reminder on /coffee/done when balance covers at least this many shots at the current price.
+DEBT_REMINDER_MIN_SHOTS = 100
 
 NOTICES = {"saved": "user.account.notice_saved", "registered": "user.account.notice_registered",
            "expired": "user.account.notice_expired", "no_price": "user.account.notice_no_price",
@@ -107,6 +110,19 @@ def headline(balance_cents: int) -> Headline:
     """The balance in words ("Outstanding: €1.50", "Credit: €2.00", "All settled"); never a minus sign."""
     state, amount = overview.balance_label(balance_cents)
     return Headline(state, t(f"user.headline.{state}", amount=format_money(amount)))
+
+
+def debt_reminder_shots(db: Session, balance_cents: int) -> int | None:
+    """Whole shots owed at the current price when at/above DEBT_REMINDER_MIN_SHOTS; else None."""
+    if balance_cents <= 0:
+        return None
+    price = prices.get_price_in_effect(db)
+    if price is None or price.price_per_shot_cents <= 0:
+        return None
+    per_shot = price.price_per_shot_cents
+    if balance_cents < DEBT_REMINDER_MIN_SHOTS * per_shot:
+        return None
+    return balance_cents // per_shot
 
 
 def month_shots(db: Session, user_id) -> int:
