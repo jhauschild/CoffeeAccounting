@@ -289,14 +289,32 @@ def test_home_for_guests_and_users(client, db, user, login):
 
 def test_privacy_page(client, monkeypatch):
     monkeypatch.setenv("RETENTION_TEXT", "We keep everything for seven years.")
-    monkeypatch.setenv("OPERATOR_CONTACT", "coffee-admin@example.org")
+    monkeypatch.setenv("OPERATOR_CONTACT", "Coffee Admin <coffee-admin@example.org>")
     reload_settings()
     r = TestClient(create_app()).get("/privacy")
     assert r.status_code == 200
-    for expected in ("seven years", "coffee-admin@example.org", "trust-based", "audit", "session", "display name",
+    for expected in ("seven years", "Coffee Admin", "trust-based", "audit", "session", "display name",
                      "e-mail", "hash"):
         assert expected.lower() in r.text.lower()
+    assert "coffee-admin@example.org" not in r.text  # anonymous: names only
     assert "http://" not in r.text and "https://" not in r.text
+
+
+def test_privacy_contact_emails_only_when_signed_in(client, db, monkeypatch, login):
+    monkeypatch.setenv(
+        "OPERATOR_CONTACT",
+        "Alice Example <alice@example.org>, Bob Example <bob@example.org>",
+    )
+    reload_settings()
+    anon = client.get("/privacy").text
+    assert "Alice Example" in anon and "Bob Example" in anon
+    assert "alice@example.org" not in anon and "bob@example.org" not in anon
+
+    member = make_account(db, "Viewer", username="privacyviewer")
+    login(member)
+    signed = client.get("/privacy").text
+    assert "alice@example.org" in signed and "bob@example.org" in signed
+    assert "Alice Example" in signed and "Bob Example" in signed
 
 
 # ----- cookies, redirects, markup -------------------------------------------------------------

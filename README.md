@@ -158,7 +158,7 @@ Set in `.env` (see `.env.example`, which documents each one). The defaults are t
 | `ADMIN_BOOTSTRAP_USERNAME`, `ADMIN_BOOTSTRAP_PASSWORD` | empty | creates the first head admin at start, ignored once any admin exists; `setup` is the preferred way |
 | `LOCAL_TIMEZONE` | `Europe/Berlin` | display and day/week/month boundaries (weeks start Monday) |
 | `APP_TITLE` | `Coffee Ledger` | page title |
-| `OPERATOR_CONTACT` | empty | shown on `/privacy` |
+| `OPERATOR_CONTACT` | empty | shown on `/privacy` (names always; e-mail addresses only when signed in) |
 | `RETENTION_TEXT` | built-in sentence | retention statement on `/privacy` |
 | `CHAIR_LABEL` | `Chair` | what chairs are called, e.g. `Coffee group` |
 | `CURRENCY` | `EUR` | code, optionally `:` and a symbol, e.g. `EUR:€` |

@@ -597,8 +597,20 @@ def edit_submit(request: Request, display_name: str = Form(""), chair_id: str = 
 
 
 # ----- privacy --------------------------------------------------------------------------------
+def _privacy_contact(*, signed_in: bool) -> str:
+    """Operator contact for `/privacy`. Anonymous visitors see names only (no e-mail addresses)."""
+    from email.utils import getaddresses
+
+    raw = get_settings().operator_contact.strip()
+    if not raw or signed_in:
+        return raw
+    names = [name.strip() for name, _addr in getaddresses([raw]) if name.strip()]
+    return ", ".join(names)
+
+
 @router.get("/privacy")
 def privacy(request: Request):
     settings = get_settings()
+    signed_in = deps.current_user(request) is not None
     return render(request, "user/privacy.html", {"retention": settings.retention_text,
-                                                 "contact": settings.operator_contact})
+                                                 "contact": _privacy_contact(signed_in=signed_in)})
