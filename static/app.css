@@ -106,7 +106,7 @@ p { margin: 0 0 0.75rem; }
 
 /* Forms */
 label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
-input[type="text"], input[type="password"], input[type="search"], input[type="number"],
+input[type="text"], input[type="email"], input[type="password"], input[type="search"], input[type="number"],
 input[type="datetime-local"], input[type="date"], select, textarea {
   display: block;
   width: 100%;
