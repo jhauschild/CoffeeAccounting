@@ -68,7 +68,7 @@ The interface list (ledger, groups, overview, passwords, authz, mail, mail crede
 
 ## Ops pieces
 
-- `scripts/run.sh` starts one uvicorn worker with `--proxy-headers`, `--forwarded-allow-ips $TRUSTED_PROXY_IPS` and `--no-access-log`; the application logs requests itself with one-time tokens redacted (`web/accesslog.py`; proxy side: `deploy/README.md`).
+- `scripts/run.sh` runs `scripts/migrate_on_start.sh` (backup via `backup.sh` when an existing DB is behind head, then `alembic upgrade head`) and starts one uvicorn worker with `--proxy-headers`, `--forwarded-allow-ips $TRUSTED_PROXY_IPS` and `--no-access-log`; the application logs requests itself with one-time tokens redacted (`web/accesslog.py`; proxy side: `deploy/README.md`).
 - `scripts/backup.sh`, `restore.sh`, `dbtool.py` use SQLite's backup API on the database file only; the secrets directory is never read.
 - `docker-compose.yml`: one `app` service, named volumes `coffee_data` (`/data`) and `secrets` (`/secrets`, mode 0700, owned by the app user, mounted nowhere else), bind mount `./backups`.
 - `scripts/smoke.sh` is the HTTP smoke test against a running instance.

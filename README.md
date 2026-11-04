@@ -201,11 +201,12 @@ Edit `.env`: set `PUBLIC_BASE_URL` (https), `SECRET_KEY`, `MAIL_FROM`, `OPERATOR
 
 ```bash
 docker compose pull                                        # ghcr.io/jhauschild/coffeeaccounting:latest
-docker compose run --rm app alembic upgrade head           # explicit migration step; never run implicitly
+docker compose up -d                                       # startup migrates (backs up first if an existing DB is behind)
 docker compose run --rm -it app python -m app.cli setup    # guided: head admin, mail login, first price, test mail
-docker compose up -d
 curl -fsS http://127.0.0.1:8000/readyz                     # {"status":"ok","check":"ok"}
 ```
+
+Container start runs `scripts/migrate_on_start.sh`: if the database file is missing it applies `alembic upgrade head`; if it exists but is behind the image head it runs `scripts/backup.sh` then migrates (a failed backup aborts startup); if it is already at head it does nothing. You can still run `docker compose run --rm app alembic upgrade head` by hand.
 
 `python -m app.cli setup` walks through five steps, each skippable and each also a command of its own: the head administrator (`create-admin`, hidden password prompt, twice), a reminder that TOTP is enrolled at the first login, the mail login (`setup-mail`), the first price (`set-price`) and an optional test mail (`test-mail`). To run just the mail step later:
 
@@ -309,8 +310,7 @@ The base image is `python:3.13-slim`, the interpreter minor the tests run on. A 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock
 set -a; . ./.env; set +a
-.venv/bin/alembic upgrade head
-sh scripts/run.sh          # one uvicorn worker; run it under systemd or similar
+sh scripts/run.sh          # migrates (with backup when needed), then one uvicorn worker
 ```
 
 Set `DATABASE_URL=sqlite:////var/lib/coffee/coffee.db` (absolute path, four slashes), `SECRETS_DIR=/var/lib/coffee-secrets` (a directory writable by the service user and readable by nobody else) and make the database directory writable by the service user. The scripts in `scripts/` accept `DB_PATH=/var/lib/coffee/coffee.db` for the same file.
@@ -405,22 +405,19 @@ Everything recorded after the backup is lost; users can simply scan again.
 
 ## Upgrade notes
 
-**v1 to v2:** v2 changed the schema in the initial migration (one revision, `0001_initial_schema`), so **a database created by v1 cannot be upgraded**. Start with a fresh database. Nothing was deployed with v1, so there is nothing to migrate: remove the old `coffee_data` volume (or use a new host), run `alembic upgrade head`, and set up as described above. Cookies and signed tokens from earlier test builds are invalid.
+**v1 to v2:** v2 changed the schema in the initial migration (one revision, `0001_initial_schema`), so **a database created by v1 cannot be upgraded**. Start with a fresh database. Nothing was deployed with v1, so there is nothing to migrate: remove the old `coffee_data` volume (or use a new host), start the container (startup applies migrations), and set up as described above. Cookies and signed tokens from earlier test builds are invalid.
 
-**Later upgrades:**
+**Later upgrades** (including automatic image pulls that recreate the container):
 
 ```bash
-docker compose exec -T app scripts/backup.sh              # 1. backup
-git pull                                                   # 2. new compose/.env.example if needed
-docker compose pull                                        # 3. new image from GHCR
-docker compose stop app                                    # 4. brief downtime avoids old code on a new schema
-docker compose run --rm app alembic upgrade head           # 5. migrate explicitly
-docker compose up -d                                       # 6. start
-curl -fsS http://127.0.0.1:8000/readyz                     # 7. ready?
-scripts/smoke.sh https://coffee.example.org               # 8. optional check (public pages, no ledger writes)
+git pull                                                   # 1. new compose/.env.example if needed
+docker compose pull                                        # 2. new image from GHCR
+docker compose up -d                                       # 3. recreate: backup (if behind) + migrate, then start
+curl -fsS http://127.0.0.1:8000/readyz                     # 4. ready?
+scripts/smoke.sh https://coffee.example.org               # 5. optional check (public pages, no ledger writes)
 ```
 
-Read the release notes and `.env.example` for new variables first. If something goes wrong, restore the backup from step 1 and start the previous image tag or digest. `/readyz` returns 503 (`"check":"migrations"`) while the database is behind the code; migrations are never run at container start. Do not downgrade a production database except from a backup.
+Read the release notes and `.env.example` for new variables first. Ensure `./backups` stays writable by the container user (`chown 10001`), because a DB that needs migrating will not start if the pre-migration backup fails. If something goes wrong, restore the newest `coffee-*.db` from `./backups` and start the previous image tag or digest. `/readyz` returns 503 (`"check":"migrations"`) while the database is behind the code (for example mid-startup or if migrate was skipped). Do not downgrade a production database except from a backup.
 
 ## Security considerations
 

@@ -91,6 +91,60 @@ def test_backup_fails_cleanly_without_database(tmp_path):
     assert done.returncode == 1 and "database not found" in done.stderr
 
 
+def test_migrate_on_start_creates_fresh_db_without_backup(tmp_path):
+    path = tmp_path / "data" / "coffee.db"
+    path.parent.mkdir()
+    out = tmp_path / "bk"
+    done = _run(["bash", str(SCRIPTS / "migrate_on_start.sh")], _env(path, BACKUP_DIR=str(out)))
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert path.is_file()
+    assert "no database yet" in done.stdout
+    assert list(out.glob("coffee-*.db")) == []
+    assert _run([sys.executable, "-m", "alembic", "current"], _env(path)).returncode == 0
+
+
+def test_migrate_on_start_noop_when_already_at_head(db, tmp_path):
+    out = tmp_path / "bk"
+    done = _run(["bash", str(SCRIPTS / "migrate_on_start.sh")], _env(db, BACKUP_DIR=str(out)))
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert "already at alembic head" in done.stdout
+    assert list(out.glob("coffee-*.db")) == []
+
+
+def test_migrate_on_start_backs_up_then_upgrades_when_behind(db, tmp_path):
+    out = tmp_path / "bk"
+    down = _run([sys.executable, "-m", "alembic", "downgrade", "-1"], _env(db))
+    assert down.returncode == 0, down.stderr
+    head = _run([sys.executable, "-m", "alembic", "heads"], _env(db)).stdout.strip().split()[0]
+    before = _run([sys.executable, "-m", "alembic", "current"], _env(db)).stdout
+    assert head not in before
+    done = _run(["bash", str(SCRIPTS / "migrate_on_start.sh")], _env(db, BACKUP_DIR=str(out)))
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert "backing up before migration" in done.stdout
+    assert "migrations applied" in done.stdout
+    assert list(out.glob("coffee-*.db")), "expected a pre-migration backup"
+    cur = _run([sys.executable, "-m", "alembic", "current"], _env(db)).stdout
+    assert head in cur
+
+
+def test_migrate_on_start_refuses_when_backup_fails(db, tmp_path):
+    down = _run([sys.executable, "-m", "alembic", "downgrade", "-1"], _env(db))
+    assert down.returncode == 0, down.stderr
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    blocked.chmod(0o500)  # not writable by the script
+    done = _run(["bash", str(SCRIPTS / "migrate_on_start.sh")], _env(db, BACKUP_DIR=str(blocked / "nested")))
+    assert done.returncode != 0
+    assert "refusing to migrate" in done.stderr or "backup failed" in done.stderr or "Permission denied" in (
+        done.stderr + done.stdout
+    )
+
+
+def test_run_sh_invokes_migrate_on_start():
+    text = (SCRIPTS / "run.sh").read_text()
+    assert "migrate_on_start.sh" in text
+
+
 def test_restore_round_trip(db, tmp_path):
     out = tmp_path / "bk"
     assert _run(["bash", str(SCRIPTS / "backup.sh"), str(out)], _env(db)).returncode == 0

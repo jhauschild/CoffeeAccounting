@@ -3,9 +3,8 @@
 #
 #   cp .env.example .env            # edit: PUBLIC_BASE_URL, SECRET_KEY, MAIL_FROM, ...
 #   docker compose pull
-#   docker compose run --rm app alembic upgrade head                        # explicit migration step (never implicit)
+#   docker compose up -d            # startup backs up (if needed) then migrates, then serves
 #   docker compose run --rm -it app python -m app.cli setup                 # head admin, mail login, first price
-#   docker compose up -d
 #
 # Run exactly one replica: the application requires a single process (see README).
 #

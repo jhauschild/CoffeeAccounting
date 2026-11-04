@@ -4,8 +4,11 @@
 # (comma-separated IPs or CIDR networks; the application applies the same list to X-Forwarded-For).
 # --no-access-log: uvicorn's access log would print one-time tokens (/verify/<token>, /reset/<token>);
 # the application logs requests itself with those paths redacted (app/web/accesslog.py).
-# Migrations are NOT run here: use `docker compose run --rm app alembic upgrade head`.
+# Schema: scripts/migrate_on_start.sh runs before uvicorn. If the DB exists and is behind the
+# image head it backs up first (scripts/backup.sh) then runs `alembic upgrade head`; a failed
+# backup aborts startup. Fresh DBs are created without a backup. Already-at-head is a no-op.
 set -eu
+bash "$(dirname "$0")/migrate_on_start.sh"
 level=$(printf '%s' "${LOG_LEVEL:-info}" | tr '[:upper:]' '[:lower:]')
 exec uvicorn app.main:app \
   --host "${HOST:-0.0.0.0}" --port "${PORT:-8000}" \
