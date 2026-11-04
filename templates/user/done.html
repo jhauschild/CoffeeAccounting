@@ -13,6 +13,9 @@
     <dt>{{ t("user.done.time") }}</dt><dd>{{ event.time }}</dd>
   </dl>
 </section>
+{% if debt_shots %}
+<p class="card notice notice-warn" role="status">{{ t("user.done.debt_reminder", n=debt_shots) }}</p>
+{% endif %}
 <section class="card">
   <h2>{{ t("user.totals.title") }}</h2>
   {{ headline_block(headline, month_shots) }}

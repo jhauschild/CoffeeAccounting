@@ -67,16 +67,16 @@ def test_card_not_configured_on_smtp_backend_shows_banner(head, monkeypatch):
     assert "Last send OK" in page and "never" in page
 
 
-def test_card_configured_shows_masked_user_and_last_results_never_the_password(head, monkeypatch):
+def test_card_configured_shows_user_and_last_results_never_the_password(head, monkeypatch):
     smtp_backend(monkeypatch)
     mail_credentials.save_credentials(SMTP_USER, SECRET_PW)
     persist(None, minutes_ago=20)
     persist("auth", minutes_ago=5)
     page = head[0].get("/admin").text
-    assert "<dd>yes</dd>" in page and "c***@lrz.test" in page
+    assert "<dd>yes</dd>" in page and SMTP_USER in page
     assert "Mail failing: auth." in page and "auth, " in page and "run setup-mail again" in page
     assert "Mail is not configured" not in page
-    assert SECRET_PW not in page and SMTP_USER not in page  # the full username is not shown either
+    assert SECRET_PW not in page
     assert 'type="password"' not in page and "<form" not in page.split("mail-card-title")[1].split("held-tile-title")[0]
 
 
@@ -106,7 +106,7 @@ def test_card_healthy_state_has_no_banner(head, monkeypatch):
     mail_credentials.save_credentials(SMTP_USER, SECRET_PW)
     persist(None)
     page = head[0].get("/admin").text
-    assert 'role="alert"' not in page and "c***@lrz.test" in page
+    assert 'role="alert"' not in page and SMTP_USER in page
 
 
 def test_card_with_a_development_backend_needs_no_login_banner(head):
@@ -139,7 +139,7 @@ def test_group_admin_sees_neither_card_nor_tile_nor_banner(group_admin, monkeypa
     mail_credentials.save_credentials(SMTP_USER, SECRET_PW)
     persist("auth")
     page = group_admin[0].get("/admin").text
-    for text in ("Mail configured", "Mail failing", "Mail is not configured", "c***@lrz.test", "Held by groups",
+    for text in ("Mail configured", "Mail failing", "Mail is not configured", SMTP_USER, "Held by groups",
                  "/admin/groups", "setup-mail", "mail-card-title"):
         assert text not in page, text
 

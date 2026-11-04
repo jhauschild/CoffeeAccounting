@@ -448,11 +448,12 @@ def test_login_page_links_to_registration(client):
 # ----- privacy ----------------------------------------------------------------------------------------------
 def test_privacy_page_states_who_sees_what(client, monkeypatch):
     monkeypatch.setenv("RETENTION_TEXT", "We keep everything for seven years.")
-    monkeypatch.setenv("OPERATOR_CONTACT", "coffee-admin@example.org")
+    monkeypatch.setenv("OPERATOR_CONTACT", "Coffee Admin <coffee-admin@example.org>")
     reload_settings()
     text = client.get("/privacy").text
     low = text.lower()
-    assert "seven years" in text and "coffee-admin@example.org" in text  # retention and contact stay
+    assert "seven years" in text and "Coffee Admin" in text  # retention and contact name stay
+    assert "coffee-admin@example.org" not in text  # anonymous: no operator e-mail
     assert "every verified, signed-in account" in low
     for visible in ("display name", "balance", "history", "group balances", "group admins"):
         assert visible in low

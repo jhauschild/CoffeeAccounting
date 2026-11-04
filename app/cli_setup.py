@@ -134,7 +134,7 @@ def cmd_mail_status(args) -> int:
         login = mail_credentials.status()
         card = mail_status.MailCard(
             backend=get_settings().mail_backend or "smtp", configured=login.configured,
-            masked_username=login.masked_username, unreadable=login.unreadable,
+            username=login.username, masked_username=login.masked_username, unreadable=login.unreadable,
             needs_login=get_settings().mail_backend == "smtp", last_ok_at=None, last_failure_category=None,
             last_failure_at=None, cap_reached=False, max_per_hour=get_settings().mail_max_per_hour, banner=None)
         persisted = False

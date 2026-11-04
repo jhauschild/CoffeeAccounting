@@ -292,3 +292,20 @@ def test_audit_view_filter_and_global_only(gc, cc, alice):
     assert cc[0].get("/admin/audit", follow_redirects=False).status_code == 403
     detail = gc[0].get(f"/admin/users/{alice.id}").text
     assert "payment.recorded" in detail  # user detail shows the profile's audit history
+
+
+# ----- config overview ------------------------------------------------------------------------
+def test_config_page_global_only_redacts_secrets(gc, cc):
+    from app.config import DEV_SECRET_KEY, get_settings
+
+    settings = get_settings()
+    r = gc[0].get("/admin/config")
+    assert r.status_code == 200
+    page = r.text
+    assert "ENVIRONMENT" in page and settings.environment in page
+    assert "APP_TITLE" in page and settings.app_title in page
+    assert "SECRET_KEY" in page
+    assert settings.secret_key not in page
+    assert DEV_SECRET_KEY not in page
+    assert "set (" in page and "characters)" in page
+    assert cc[0].get("/admin/config", follow_redirects=False).status_code == 403

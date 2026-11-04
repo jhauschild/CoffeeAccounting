@@ -2,7 +2,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import DEV_SECRET_KEY, Settings, public_config_rows
 
 PROD = dict(
     _env_file=None,
@@ -90,3 +90,21 @@ def test_errors_never_echo_input():
     text = str(exc.value)
     assert secret not in text and "leak-me" not in text and "input_value" not in text
     assert "MAIL_BACKEND" in text and "SMTP_PORT" in text
+
+
+def test_public_config_rows_redacts_secrets():
+    secret = "Sup3r-Secret-Key-Value-0123456789abcdef"
+    s = Settings(**{**PROD, "secret_key": secret, "admin_bootstrap_username": "boot",
+                    "admin_bootstrap_password": "boot-pass-word"})
+    by_name = {row["name"]: row["value"] for row in public_config_rows(s)}
+    assert by_name["SECRET_KEY"] == f"set ({len(secret)} characters)"
+    assert by_name["ADMIN_BOOTSTRAP_USERNAME"] == "set"
+    assert by_name["ADMIN_BOOTSTRAP_PASSWORD"] == "set"
+    assert by_name["ENVIRONMENT"] == "production"
+    assert by_name["IS_PRODUCTION"] == "true"
+    assert by_name["BALANCE_TOTP_REQUIRED"] == "true"
+    joined = " ".join(by_name.values())
+    assert secret not in joined and "boot" not in joined and "boot-pass-word" not in joined
+    dev_rows = public_config_rows(dev(secret_key=DEV_SECRET_KEY, public_base_url="http://localhost:8000"))
+    assert dev_rows[0] == {"name": "SECRET_KEY", "value": "using published DEV key"}
+    assert DEV_SECRET_KEY not in " ".join(r["value"] for r in dev_rows)

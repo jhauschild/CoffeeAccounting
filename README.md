@@ -158,7 +158,7 @@ Set in `.env` (see `.env.example`, which documents each one). The defaults are t
 | `ADMIN_BOOTSTRAP_USERNAME`, `ADMIN_BOOTSTRAP_PASSWORD` | empty | creates the first head admin at start, ignored once any admin exists; `setup` is the preferred way |
 | `LOCAL_TIMEZONE` | `Europe/Berlin` | display and day/week/month boundaries (weeks start Monday) |
 | `APP_TITLE` | `Coffee Ledger` | page title |
-| `OPERATOR_CONTACT` | empty | shown on `/privacy` |
+| `OPERATOR_CONTACT` | empty | shown on `/privacy` (names always; e-mail addresses only when signed in) |
 | `RETENTION_TEXT` | built-in sentence | retention statement on `/privacy` |
 | `CHAIR_LABEL` | `Chair` | what chairs are called, e.g. `Coffee group` |
 | `CURRENCY` | `EUR` | code, optionally `:` and a symbol, e.g. `EUR:€` |
@@ -201,11 +201,12 @@ Edit `.env`: set `PUBLIC_BASE_URL` (https), `SECRET_KEY`, `MAIL_FROM`, `OPERATOR
 
 ```bash
 docker compose pull                                        # ghcr.io/jhauschild/coffeeaccounting:latest
-docker compose run --rm app alembic upgrade head           # explicit migration step; never run implicitly
+docker compose up -d                                       # startup migrates (backs up first if an existing DB is behind)
 docker compose run --rm -it app python -m app.cli setup    # guided: head admin, mail login, first price, test mail
-docker compose up -d
 curl -fsS http://127.0.0.1:8000/readyz                     # {"status":"ok","check":"ok"}
 ```
+
+Container start runs `scripts/migrate_on_start.sh`: if the database file is missing it applies `alembic upgrade head`; if it exists but is behind the image head it runs `scripts/backup.sh` then migrates (a failed backup aborts startup); if it is already at head it does nothing. You can still run `docker compose run --rm app alembic upgrade head` by hand.
 
 `python -m app.cli setup` walks through five steps, each skippable and each also a command of its own: the head administrator (`create-admin`, hidden password prompt, twice), a reminder that TOTP is enrolled at the first login, the mail login (`setup-mail`), the first price (`set-price`) and an optional test mail (`test-mail`). To run just the mail step later:
 
@@ -309,8 +310,7 @@ The base image is `python:3.13-slim`, the interpreter minor the tests run on. A 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock
 set -a; . ./.env; set +a
-.venv/bin/alembic upgrade head
-sh scripts/run.sh          # one uvicorn worker; run it under systemd or similar
+sh scripts/run.sh          # migrates (with backup when needed), then one uvicorn worker
 ```
 
 Set `DATABASE_URL=sqlite:////var/lib/coffee/coffee.db` (absolute path, four slashes), `SECRETS_DIR=/var/lib/coffee-secrets` (a directory writable by the service user and readable by nobody else) and make the database directory writable by the service user. The scripts in `scripts/` accept `DB_PATH=/var/lib/coffee/coffee.db` for the same file.
@@ -328,7 +328,7 @@ docker compose run --rm app python -m app.cli clear-mail         # delete the st
 
 - `setup-mail --password-stdin` is for scripted installs only: the first stdin line is the username (skipped when `--username` is given), the next the password.
 - The command refuses to run, with a clear message, when `SECRETS_DIR` is not writable (mount the volume writable for the app user).
-- `mail-status` and the head admin's dashboard card show only `mail configured: yes/no`, the masked user (`c***@lrz.de`), the last send that worked and the last failure category with its time (`connect`, `tls`, `auth`, `recipient_rejected`, `timeout`, `cap_exceeded`, `other`). `test-mail` prints the category on failure, never credentials. The status is kept as audit-log rows (`mail.send_ok`, at most one per 10 minutes, and `mail.send_failed` with the category only), so the command line and the server, two processes, see the same result.
+- `mail-status` shows `mail configured: yes/no`, a masked user (`c***@lrz.de`), the last send that worked and the last failure category with its time (`connect`, `tls`, `auth`, `recipient_rejected`, `timeout`, `cap_exceeded`, `other`). The head admin's dashboard card shows the same status with the full SMTP username (never the password). `test-mail` prints the category on failure, never credentials. The status is kept as audit-log rows (`mail.send_ok`, at most one per 10 minutes, and `mail.send_failed` with the category only), so the command line and the server, two processes, see the same result.
 - The dashboard shows a banner for the head admin only: "mail not configured", "mail failing: <category>", or "cap reached" when the hourly limit (`MAIL_MAX_PER_HOUR`) blocked sending (nothing is broken then; anonymous registration and reset requests can reach the cap, and mails go out again after the hour).
 - Changing `SECRET_KEY` makes the stored login unreadable (`mail login unreadable: re-run setup-mail`); run `setup-mail` again. A restore onto a new server likewise needs `setup-mail`, because the secrets volume is not part of any backup.
 - Use a dedicated or functional mailbox if TUM or LRZ offers one, not a personal account, and an app or service password if available. The password is then easy to rotate by re-running `setup-mail`. The encryption protects against a leaked volume snapshot or an accidentally shared file; it does not protect against someone who controls the running server.
@@ -405,22 +405,19 @@ Everything recorded after the backup is lost; users can simply scan again.
 
 ## Upgrade notes
 
-**v1 to v2:** v2 changed the schema in the initial migration (one revision, `0001_initial_schema`), so **a database created by v1 cannot be upgraded**. Start with a fresh database. Nothing was deployed with v1, so there is nothing to migrate: remove the old `coffee_data` volume (or use a new host), run `alembic upgrade head`, and set up as described above. Cookies and signed tokens from earlier test builds are invalid.
+**v1 to v2:** v2 changed the schema in the initial migration (one revision, `0001_initial_schema`), so **a database created by v1 cannot be upgraded**. Start with a fresh database. Nothing was deployed with v1, so there is nothing to migrate: remove the old `coffee_data` volume (or use a new host), start the container (startup applies migrations), and set up as described above. Cookies and signed tokens from earlier test builds are invalid.
 
-**Later upgrades:**
+**Later upgrades** (including automatic image pulls that recreate the container):
 
 ```bash
-docker compose exec -T app scripts/backup.sh              # 1. backup
-git pull                                                   # 2. new compose/.env.example if needed
-docker compose pull                                        # 3. new image from GHCR
-docker compose stop app                                    # 4. brief downtime avoids old code on a new schema
-docker compose run --rm app alembic upgrade head           # 5. migrate explicitly
-docker compose up -d                                       # 6. start
-curl -fsS http://127.0.0.1:8000/readyz                     # 7. ready?
-scripts/smoke.sh https://coffee.example.org               # 8. optional check (public pages, no ledger writes)
+git pull                                                   # 1. new compose/.env.example if needed
+docker compose pull                                        # 2. new image from GHCR
+docker compose up -d                                       # 3. recreate: backup (if behind) + migrate, then start
+curl -fsS http://127.0.0.1:8000/readyz                     # 4. ready?
+scripts/smoke.sh https://coffee.example.org               # 5. optional check (public pages, no ledger writes)
 ```
 
-Read the release notes and `.env.example` for new variables first. If something goes wrong, restore the backup from step 1 and start the previous image tag or digest. `/readyz` returns 503 (`"check":"migrations"`) while the database is behind the code; migrations are never run at container start. Do not downgrade a production database except from a backup.
+Read the release notes and `.env.example` for new variables first. Ensure `./backups` stays writable by the container user (`chown 10001`), because a DB that needs migrating will not start if the pre-migration backup fails. If something goes wrong, restore the newest `coffee-*.db` from `./backups` and start the previous image tag or digest. `/readyz` returns 503 (`"check":"migrations"`) while the database is behind the code (for example mid-startup or if migrate was skipped). Do not downgrade a production database except from a backup.
 
 ## Security considerations
 

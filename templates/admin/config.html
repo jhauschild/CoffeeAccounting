@@ -1,0 +1,16 @@
+{% extends "admin/base.html" %}
+{% block admin_title %}{{ t("admin.config.title") }}{% endblock %}
+{% block admin_content %}
+<h1>{{ t("admin.config.title") }}</h1>
+<p class="muted">{{ t("admin.config.intro") }}</p>
+<section class="card">
+  <div class="table-wrap"><table class="table-cards">
+    <thead><tr><th>{{ t("admin.config.name") }}</th><th>{{ t("admin.config.value") }}</th></tr></thead>
+    <tbody>
+    {% for row in rows %}<tr>
+      <th scope="row" data-label="{{ t('admin.config.name') }}"><code>{{ row.name }}</code></th>
+      <td data-label="{{ t('admin.config.value') }}" class="wrap">{{ row.value }}</td></tr>
+    {% else %}<tr><td colspan="2" class="muted">{{ t("admin.none") }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</section>
+{% endblock %}

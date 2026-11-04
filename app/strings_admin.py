@@ -34,6 +34,7 @@ STRINGS: dict[str, str] = {
     "admin.nav.chairs": "{chair_label}s",
     "admin.nav.prices": "Prices",
     "admin.nav.audit": "Audit log",
+    "admin.nav.config": "Config",
     "admin.nav.groups": "Group balances",
     "admin.nav.account": "Account",
     "admin.nav.logout": "Sign out",
@@ -218,6 +219,13 @@ STRINGS: dict[str, str] = {
     "admin.qr.download": "Download {label} (SVG)",
     "admin.qr.print": "Print",
     "admin.audit.title": "Audit log",
+    "admin.config.title": "Configuration",
+    "admin.config.intro": (
+        "Effective runtime values from environment variables and code defaults. "
+        "Not editable here; change them via .env or the process environment and restart."
+    ),
+    "admin.config.name": "Variable",
+    "admin.config.value": "Value",
     "admin.audit.filter": "Action starts with",
     "admin.audit.actor": "Actor",
     "admin.audit.action": "Action",

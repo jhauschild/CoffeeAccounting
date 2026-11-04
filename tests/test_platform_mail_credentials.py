@@ -192,13 +192,16 @@ def test_clear_credentials_removes_the_file(secrets_dir):
 def test_status_masks_the_username_and_never_has_the_password(secrets_dir):
     mail_credentials.save_credentials(USER, PASSWORD)
     st = mail_credentials.status()
-    assert st.configured is True and st.masked_username == "c***@lrz.de" and st.unreadable is False
-    assert PASSWORD not in repr(st) and USER not in repr(st)
+    assert st.configured is True and st.username == USER and st.masked_username == "c***@lrz.de"
+    assert st.unreadable is False
+    assert PASSWORD not in repr(st) and PASSWORD not in repr(st.username)
     assert not hasattr(st, "password")
     mail_credentials.save_credentials("Dr.Coffee@mail.lrz.de", PASSWORD)
-    assert mail_credentials.status().masked_username == "D***@mail.lrz.de"
+    st = mail_credentials.status()
+    assert st.username == "Dr.Coffee@mail.lrz.de" and st.masked_username == "D***@mail.lrz.de"
     mail_credentials.save_credentials("plainuser", PASSWORD)
-    assert mail_credentials.status().masked_username == "p***"
+    st = mail_credentials.status()
+    assert st.username == "plainuser" and st.masked_username == "p***"
 
 
 def test_smtp_backend_reports_unreadable_login_without_connecting(secrets_dir, monkeypatch):

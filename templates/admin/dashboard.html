@@ -17,7 +17,7 @@
   <h2 id="mail-card-title">{{ t("admin.mail.title") }}</h2>
   <dl class="totals facts">
     <dt>{{ t("admin.mail.configured") }}</dt><dd>{{ t("admin.mail.yes") if m.configured else t("admin.mail.no") }}</dd>
-    {% if m.configured %}<dt>{{ t("admin.mail.user") }}</dt><dd>{{ m.masked_username }}</dd>{% endif %}
+    {% if m.configured %}<dt>{{ t("admin.mail.user") }}</dt><dd>{{ m.username }}</dd>{% endif %}
     <dt>{{ t("admin.mail.backend") }}</dt><dd>{{ m.backend }}</dd>
     <dt>{{ t("admin.mail.last_ok") }}</dt><dd>{% if m.last_ok_at %}{{ m.last_ok_at|local("%Y-%m-%d %H:%M") }}{% else %}{{ t("admin.mail.never") }}{% endif %}</dd>
     <dt>{{ t("admin.mail.last_failure") }}</dt><dd>{% if m.last_failure_category %}{{ m.last_failure_category }}, {{ m.last_failure_at|local("%Y-%m-%d %H:%M") }}{% else %}{{ t("admin.mail.none") }}{% endif %}</dd>
