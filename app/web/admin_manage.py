@@ -1,4 +1,4 @@
-"""Admin chairs, prices, QR page and audit view (owner: admin agent). Global administrators only,
+"""Admin chairs, prices, QR, audit and config view (owner: admin agent). Global administrators only,
 except the QR page which every administrator may print."""
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from starlette.responses import Response
 from sqlalchemy import func, select
 
+from app.config import get_settings, public_config_rows
 from app.db import read_session, write_session
 from app.models import AdminUser, ConsumptionEvent, User
 from app.money import parse_money
@@ -153,3 +154,9 @@ def audit_view(request: Request, action: str = Query("", max_length=64), page: i
     with read_session() as db:
         result = stats.audit_page(db, ctx.admin, action=action, page=page)
         return ad.page(request, ctx, "admin/audit.html", {"result": result, "action": action})
+
+
+# ----- config overview --------------------------------------------------------------------------
+@router.get("/config")
+def config_page(request: Request, ctx: ad.AdminContext = Depends(ad.require_global_admin)):
+    return ad.page(request, ctx, "admin/config.html", {"rows": public_config_rows(get_settings())})

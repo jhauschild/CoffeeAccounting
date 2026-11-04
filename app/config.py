@@ -300,3 +300,78 @@ def _valid_sender(mail_from: str) -> bool:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def public_config_rows(settings: Settings | None = None) -> list[dict[str, str]]:
+    """Effective Settings as env-name / display-value rows for the head-admin config page.
+
+    Secrets are never returned as raw values: ``SECRET_KEY`` is a status string;
+    bootstrap username/password are only ``set`` / ``unset``. SMTP login is not a
+    Settings field and is not included.
+    """
+    s = settings if settings is not None else get_settings()
+    rows: list[dict[str, str]] = []
+
+    def add(name: str, value: object) -> None:
+        if isinstance(value, bool):
+            text = "true" if value else "false"
+        elif value is None:
+            text = ""
+        else:
+            text = str(value)
+        rows.append({"name": name, "value": text})
+
+    if s.secret_key == DEV_SECRET_KEY:
+        add("SECRET_KEY", "using published DEV key")
+    else:
+        add("SECRET_KEY", f"set ({len(s.secret_key)} characters)")
+
+    add("ENVIRONMENT", s.environment)
+    add("PUBLIC_BASE_URL", s.public_base_url)
+    add("DATABASE_URL", s.database_url)
+    add("LOG_LEVEL", s.log_level)
+    add("LOCAL_TIMEZONE", s.local_timezone)
+    add("APP_TITLE", s.app_title)
+    add("OPERATOR_CONTACT", s.operator_contact)
+    add("RETENTION_TEXT", s.retention_text)
+    add("CHAIR_LABEL", s.chair_label)
+    add("CURRENCY", s.currency)
+    add("CURRENCY_CODE", s.currency_code)
+    add("CURRENCY_SYMBOL", s.currency_symbol)
+    add("SESSION_LIFETIME_DAYS", s.session_lifetime_days)
+    add("ADMIN_SESSION_HOURS", s.admin_session_hours)
+    add("UNDO_WINDOW_SECONDS", s.undo_window_seconds)
+    add("MAX_COFFEES_PER_SESSION_PER_HOUR", s.max_coffees_per_session_per_hour)
+    add("TRUSTED_PROXY_IPS", s.trusted_proxy_ips)
+    add("CSV_DELIMITER", s.csv_delimiter)
+    add("CSV_DECIMAL_SEPARATOR", s.csv_decimal_separator)
+
+    add("ADMIN_BOOTSTRAP_USERNAME", "set" if s.admin_bootstrap_username else "unset")
+    add("ADMIN_BOOTSTRAP_PASSWORD", "set" if s.admin_bootstrap_password else "unset")
+
+    add("MAIL_BACKEND", s.mail_backend)
+    add("SMTP_HOST", s.smtp_host)
+    add("SMTP_PORT", s.smtp_port)
+    add("SMTP_SECURITY", s.smtp_security)
+    add("MAIL_FROM", s.mail_from)
+    add("MAIL_FILE_DIR", s.mail_file_dir)
+    add("SECRETS_DIR", s.secrets_dir)
+    add("MAIL_MAX_PER_HOUR", s.mail_max_per_hour)
+
+    add("ALLOWED_EMAIL_DOMAINS", s.allowed_email_domains)
+    add("VERIFICATION_TTL_HOURS", s.verification_ttl_hours)
+    add("GUEST_APPROVAL_TTL_DAYS", s.guest_approval_ttl_days)
+    add("RESET_TTL_MINUTES", s.reset_ttl_minutes)
+    add("PASSWORD_MIN_LENGTH", s.password_min_length)
+    add("STEPUP_WINDOW_SECONDS", s.stepup_window_seconds)
+    add("IDENTITY_RESTORE_DAYS", s.identity_restore_days)
+    add("INACTIVE_ACCOUNT_DAYS", s.inactive_account_days)
+    add("HEAD_ADMIN_NOTIFY_EMAIL", s.head_admin_notify_email)
+    add("BALANCE_TOTP_REQUIRED", s.balance_totp_required)
+    add("ARGON2_TIME_COST", s.argon2_time_cost)
+    add("ARGON2_MEMORY_COST_KIB", s.argon2_memory_cost_kib)
+    add("ARGON2_PARALLELISM", s.argon2_parallelism)
+
+    add("IS_PRODUCTION", s.is_production)
+    add("COOKIE_SECURE", s.cookie_secure)
+    return rows
