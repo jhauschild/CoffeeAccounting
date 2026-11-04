@@ -380,8 +380,8 @@ def _build_deactivate_mails(
         meta["balance_mails"]["has_credit"] = 1
 
     if not gas:
-        head_to = get_settings().head_admin_notify_email.strip()
-        if head_to:
+        head_tos = get_settings().head_admin_notify_emails
+        if head_tos:
             kind = (
                 t("mail.deactivate.balance_kind_owed")
                 if balance > 0
@@ -395,11 +395,11 @@ def _build_deactivate_mails(
                 balance_kind=kind,
                 admin_url=admin_url,
             )
-            messages.append(build_message(to=head_to, subject=subject, body=body))
-            meta["balance_mails"]["no_group_admin"] = 1
+            for head_to in head_tos:
+                messages.append(build_message(to=head_to, subject=subject, body=body))
+                meta["balance_mails"]["no_group_admin"] += 1
         else:
             meta["balance_notify_head_skipped"] = True
-
     return messages, meta
 
 

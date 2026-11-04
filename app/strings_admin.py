@@ -150,7 +150,7 @@ STRINGS: dict[str, str] = {
         "Anonymizes the display name to Alumni N, clears the login name and e-mail for public use, and "
         "revokes sessions. For 90 days the original identity can be restored here or by signing in with the "
         "old username and password. The {chair_label} and ledger stay. History is kept. A non-zero balance "
-        "triggers settlement mails to the person and the group admins (or the head-admin notify address if "
+        "triggers settlement mails to the person and the group admins (or the head-admin notify addresses if "
         "the {chair_label} has no group admin)."
     ),
     "admin.detail.reactivate": "Reactivate profile",

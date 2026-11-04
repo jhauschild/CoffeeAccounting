@@ -43,6 +43,18 @@ def test_allowed_domains_parsing():
     assert s.allowed_email_domain_list == ["tum.de", "*.tum.de"]
 
 
+def test_head_admin_notify_emails_parsing():
+    assert dev().head_admin_notify_emails == []
+    s = dev(head_admin_notify_email=" Alice@Example.org , bob@example.org ,,")
+    assert s.head_admin_notify_emails == ["alice@example.org", "bob@example.org"]
+    assert s.head_admin_notify_email == "alice@example.org,bob@example.org"
+
+
+def test_head_admin_notify_email_invalid_refused():
+    with pytest.raises(ValidationError):
+        dev(head_admin_notify_email="alice@example.org,not-an-email")
+
+
 @pytest.mark.parametrize("override", [
     dict(mail_backend="console"), dict(mail_backend="memory"), dict(mail_backend="file", mail_file_dir="/tmp/x"),
     dict(mail_from=""), dict(mail_from="no-at-sign"), dict(smtp_host=" "),
