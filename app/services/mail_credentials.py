@@ -65,7 +65,8 @@ class MailCredentials:
 @dataclass(frozen=True)
 class MailLoginStatus:
     configured: bool  # a readable login is stored
-    masked_username: str | None = None  # e.g. "c***@lrz.de"
+    username: str | None = None  # full SMTP login name (admin page); never the password
+    masked_username: str | None = None  # e.g. "c***@lrz.de" (CLI)
     unreadable: bool = False  # a file exists but cannot be decrypted (wrong SECRET_KEY or damaged)
 
 
@@ -179,11 +180,15 @@ def clear_credentials() -> bool:
 
 
 def status() -> MailLoginStatus:
-    """Whether a readable login is stored and its masked username; never the password."""
+    """Whether a readable login is stored, with username (full) and masked form; never the password."""
     try:
         creds = load_credentials()
     except MailLoginUnreadable:
         return MailLoginStatus(configured=False, unreadable=True)
     except MailError:
         return MailLoginStatus(configured=False)
-    return MailLoginStatus(configured=True, masked_username=mask_username(creds.username))
+    return MailLoginStatus(
+        configured=True,
+        username=creds.username,
+        masked_username=mask_username(creds.username),
+    )

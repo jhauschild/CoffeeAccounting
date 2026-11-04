@@ -98,7 +98,8 @@ def read_status(db: Session) -> mail.MailStatus:
 class MailCard:
     backend: str  # smtp | console | memory | file
     configured: bool  # a readable login is stored
-    masked_username: str | None
+    username: str | None  # full SMTP login (admin dashboard)
+    masked_username: str | None  # masked form for CLI `mail-status`
     unreadable: bool
     needs_login: bool  # the backend is smtp: a login is required to send anything
     last_ok_at: datetime | None
@@ -124,10 +125,11 @@ def card(db: Session) -> MailCard:
     status = read_status(db)
     needs_login = backend == "smtp"
     view = MailCard(
-        backend=backend, configured=login.configured, masked_username=login.masked_username,
-        unreadable=login.unreadable, needs_login=needs_login, last_ok_at=status.last_ok_at,
-        last_failure_category=status.last_failure_category, last_failure_at=status.last_failure_at,
-        cap_reached=status.cap_reached, max_per_hour=settings.mail_max_per_hour, banner=None)
+        backend=backend, configured=login.configured, username=login.username,
+        masked_username=login.masked_username, unreadable=login.unreadable, needs_login=needs_login,
+        last_ok_at=status.last_ok_at, last_failure_category=status.last_failure_category,
+        last_failure_at=status.last_failure_at, cap_reached=status.cap_reached,
+        max_per_hour=settings.mail_max_per_hour, banner=None)
     banner = None
     if needs_login and not login.configured:
         banner = BANNER_NOT_CONFIGURED
