@@ -261,6 +261,25 @@ def test_no_ga_escalates_to_head_notify_email(db, chair, price, global_admin, mo
     assert meta["balance_mails"]["no_group_admin"] == 1 and meta["balance_notify_head_skipped"] is False
 
 
+def test_no_ga_escalates_to_two_head_notify_emails(db, chair, price, global_admin, monkeypatch):
+    monkeypatch.setenv("HEAD_ADMIN_NOTIFY_EMAIL", "alice@example.org, bob@example.org")
+    from tests.conftest import reload_settings
+
+    reload_settings()
+    member = factories.make_member(db, "Lone Dual", chair, username="lonedual", email="lonedual@tum.de")
+    factories.add_events(db, member, ["single"])
+    _user, messages = users.anonymize_deactivate(
+        db, user=member, reason="admin", actor_type="admin", notify=True
+    )
+    db.commit()
+    head_msgs = [m for m in messages if "no active group admin" in m.body.lower()]
+    assert {m.to for m in head_msgs} == {"alice@example.org", "bob@example.org"}
+    assert len(head_msgs) == 2
+    assert head_msgs[0].subject == head_msgs[1].subject and head_msgs[0].body == head_msgs[1].body
+    meta = db.scalar(select(AuditLog.meta).where(AuditLog.action == "user.deactivated").order_by(AuditLog.id.desc()))
+    assert meta["balance_mails"]["no_group_admin"] == 2 and meta["balance_notify_head_skipped"] is False
+
+
 def test_no_ga_skips_head_when_unset(db, chair, price, global_admin):
     member = factories.make_member(db, "Skip Head", chair, username="skiphead", email="skiphead@tum.de")
     factories.add_events(db, member, ["single"])

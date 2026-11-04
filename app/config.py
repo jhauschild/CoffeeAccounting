@@ -120,8 +120,8 @@ class Settings(BaseSettings):
     identity_restore_days: int = 90
     # Auto-deactivate active accounts with no activity (login or coffee) for this many days.
     inactive_account_days: int = 180
-    # Address for balance escalation when a chair has no active group admin (deactivation with
-    # non-zero balance). Empty = skip that mail (deactivation still proceeds).
+    # Comma-separated addresses for balance escalation when a chair has no active group admin
+    # (deactivation with non-zero balance). Empty = skip that mail (deactivation still proceeds).
     head_admin_notify_email: str = ""
     # None = default by environment (true in production, false otherwise); resolved in `_validate`.
     balance_totp_required: bool | None = None
@@ -160,6 +160,9 @@ class Settings(BaseSettings):
     def allowed_email_domain_list(self) -> list[str]:
         return [d.strip().lower() for d in self.allowed_email_domains.split(",") if d.strip()]
 
+    @property
+    def head_admin_notify_emails(self) -> list[str]:
+        return [a.strip() for a in self.head_admin_notify_email.split(",") if a.strip()]
     @property
     def cookie_secure(self) -> bool:
         """Secure cookies are mandatory in production; in development only over https."""
@@ -250,11 +253,17 @@ class Settings(BaseSettings):
             from app.services.errors import InvalidInput
             from app.services.mail import normalize_address
 
+            parts = [p.strip() for p in self.head_admin_notify_email.split(",") if p.strip()]
+            normalized: list[str] = []
             try:
-                self.head_admin_notify_email = normalize_address(self.head_admin_notify_email)
+                for part in parts:
+                    normalized.append(normalize_address(part))
             except InvalidInput:
-                errors.append("HEAD_ADMIN_NOTIFY_EMAIL must be a plain email address when set")
-
+                errors.append(
+                    "HEAD_ADMIN_NOTIFY_EMAIL must be a plain email address or a comma-separated list when set"
+                )
+            else:
+                self.head_admin_notify_email = ",".join(normalized)
         if self.is_production:
             if self.mail_backend != "smtp":
                 errors.append("MAIL_BACKEND must be smtp in production")

@@ -73,7 +73,7 @@ Health endpoints: `GET /healthz` (process is up) and `GET /readyz` (database rea
 
 ## Group admins, group balances and remittances
 
-- **Head admin**: the global administrator created on the command line. Can do everything, including setting any balance and recording money received from group admins. Has no user account, uses `/admin` directly.
+- **Head admin**: a global administrator created on the command line (`create-admin --role global`). Several head admins are allowed; each can do everything, including setting any balance and recording money received from group admins. A head admin has no user account and uses `/admin` directly.
 - **Group admin**: a member promoted by the head admin (button on the member's page; guests cannot be promoted). The scope is the member's own chair: they see and book for the people of that chair only. They sign in at `/admin/login` with their account username and password. Demotion revokes their admin sessions; if they still hold group money they stay listed as "former group admin".
 - **Cash and bookkeeping**: a payment recorded by an administrator is `cash` and counts as collected by that admin; money paid back is a negative cash payment. The head admin's "set balance" books the difference as a `bookkeeping` entry that is never counted as collected cash.
 - **Group balance** per group admin: collected (cash payments they recorded) minus remittances (money the head admin recorded as received from them) = still held. A chair's figure adds up its group admins, grouped by the chair stored on each event at event time. Remittances are append-only; a mistake is corrected by a correction entry. A negative held amount (more handed over than collected) is allowed and flagged. The head admin sees this at `/admin/groups` (with CSV export) and on the dashboard tile "Held by groups"; the same numbers appear on the open site.
@@ -153,7 +153,7 @@ Set in `.env` (see `.env.example`, which documents each one). The defaults are t
 | `SESSION_LIFETIME_DAYS` | `180` | user browser session lifetime |
 | `IDENTITY_RESTORE_DAYS` | `90` | restore window after anonymizing deactivation |
 | `INACTIVE_ACCOUNT_DAYS` | `180` | auto-deactivate after this much inactivity |
-| `HEAD_ADMIN_NOTIFY_EMAIL` | empty | balance escalation when a chair has no group admin |
+| `HEAD_ADMIN_NOTIFY_EMAIL` | empty | one or more comma-separated addresses for balance escalation when a chair has no group admin |
 | `ADMIN_SESSION_HOURS` | `12` | admin session lifetime |
 | `ADMIN_BOOTSTRAP_USERNAME`, `ADMIN_BOOTSTRAP_PASSWORD` | empty | creates the first head admin at start, ignored once any admin exists; `setup` is the preferred way |
 | `LOCAL_TIMEZONE` | `Europe/Berlin` | display and day/week/month boundaries (weeks start Monday) |
@@ -217,10 +217,11 @@ Then: sign in at `https://<host>/admin/login` and enrol TOTP immediately, create
 
 Alternative for the very first start: set `ADMIN_BOOTSTRAP_USERNAME` and `ADMIN_BOOTSTRAP_PASSWORD` (>= 12 characters) in `.env`; the app creates that head admin at startup while no administrator exists (also `python -m app.cli bootstrap-admin`) and ignores the variables afterwards; remove both lines once it worked.
 
-Administrators are managed from the command line:
+Administrators are managed from the command line. Run `create-admin --role global` again for a second head admin:
 
 ```bash
 docker compose run --rm -it app python -m app.cli create-admin --username alice --role global
+docker compose run --rm -it app python -m app.cli create-admin --username bob --role global
 docker compose run --rm app python -m app.cli list-admins
 ```
 
@@ -436,7 +437,7 @@ Read the release notes and `.env.example` for new variables first. If something 
 - Identity is a verified TUM email (members) or a member's vouching (guests), plus a password. It does not prove the user's real-world identity (see [Trust and identity model](#trust-and-identity-model)).
 - **Single process:** run exactly one app process (one uvicorn worker, one container). SQLite's single write lock and the in-process mail status assume it. Do not scale out and do not raise `--workers`.
 - **Cookie jars:** phone cameras, in-app QR scanners and home-screen web apps may use a different cookie jar than the browser where the user signed in, so the scan looks like a new browser. The recovery path is to sign in (`/login`): the scanned coffee is kept for one hour and recorded after sign-in. A member who confirms the email link in a different browser than the scan loses a coffee scanned before registering after one hour and scans again; registration never records a coffee.
-- **No full erasure.** Deactivation (self-service, admin, or the inactivity job) anonymizes the public display name to `Alumni N` and clears username/email from the live account; ledger rows, UUIDs, chair association and the audit log stay. Original identity can be restored for `IDENTITY_RESTORE_DAYS` (default 90) via admin or by signing in with the old username and password; after that `purge-expired` drops the stash and restoration is impossible. A non-zero balance triggers settlement mails (person + group admins; or `HEAD_ADMIN_NOTIFY_EMAIL` when the chair has no group admin). `/privacy` says so.
+- **No full erasure.** Deactivation (self-service, admin, or the inactivity job) anonymizes the public display name to `Alumni N` and clears username/email from the live account; ledger rows, UUIDs, chair association and the audit log stay. Original identity can be restored for `IDENTITY_RESTORE_DAYS` (default 90) via admin or by signing in with the old username and password; after that `purge-expired` drops the stash and restoration is impossible. A non-zero balance triggers settlement mails (person + group admins; or each address in `HEAD_ADMIN_NOTIFY_EMAIL` when the chair has no group admin). `/privacy` says so.
 - **Duplicate people:** different TUM aliases can create two accounts for one person; this cannot be detected automatically. Admins can merge them (balance-changing action, step-up applies).
 - **The mail login is not in backups.** A restore onto a new server, or a changed `SECRET_KEY`, needs `setup-mail` again. Until then registration and recovery pages say "temporarily unavailable".
 - **Shared sponsor trust:** a sponsor receives every reset mail of their guests and could use such a link themselves. This is accepted as part of vouching; the head admin can reassign a guest to another sponsor.
