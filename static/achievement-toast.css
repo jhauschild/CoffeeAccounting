@@ -1,0 +1,49 @@
+/* Console-style "Achievement unlocked" toast on the coffee confirmation page. */
+.ach-toasts { position: fixed; left: 0; right: 0; bottom: 1.5rem; display: flex; justify-content: center;
+  pointer-events: none; z-index: 1000; padding: 0 16px; }
+.ach-toast { display: flex; align-items: center; gap: 0.9rem; max-width: 100%; min-width: 0;
+  padding: 0.45rem 1.6rem 0.45rem 0.45rem; border-radius: 999px; cursor: pointer; pointer-events: auto;
+  background: linear-gradient(#3d3d3d, #2b2b2b); color: #fff; border: 2px solid #555;
+  box-shadow: 0 6px 24px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.12);
+  font-family: "Segoe UI", system-ui, sans-serif; --ring: 4.7rem; animation: ach-pop 6s ease-in-out forwards; }
+.ach-toast[hidden] { display: none; }
+.ach-toast-ring { position: relative; flex: none; width: 4rem; height: 4rem; border-radius: 50%;
+  display: grid; place-items: center; background-color: #1c1c1c;
+  /* four ring segments, the top-left one lit green */
+  background-image: conic-gradient(from -90deg, #6cbb2c 0 25%, #555 25% 100%); }
+.ach-toast-ring::before { content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(#1c1c1c 0 1.5%, transparent 1.5% 23.5%, #1c1c1c 23.5% 26.5%, transparent 26.5% 48.5%,
+    #1c1c1c 48.5% 51.5%, transparent 51.5% 73.5%, #1c1c1c 73.5% 76.5%, transparent 76.5% 98.5%, #1c1c1c 98.5%); }
+.ach-toast-ring::after { content: ""; position: absolute; inset: 0.45rem; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f4f4f4, #9a9a9a 60%, #5d5d5d); }
+.ach-toast-ring .badge-medal { position: relative; z-index: 1; font-size: 1.6rem; line-height: 1;
+  background: none; border: 0; box-shadow: none; width: auto; height: auto; }
+.ach-toast-ring .badge-medal img { width: 2.2rem; height: 2.2rem; border-radius: 50%; }
+.ach-toast-text { display: flex; flex-direction: column; min-width: 0; }
+.ach-toast-title { font-size: 1.35rem; font-weight: 500; line-height: 1.2; }
+.ach-toast-name { font-size: 1.05rem; opacity: .92; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Xbox-style: the ring pops in as a circle, then the pill opens to the right like a curtain,
+   holds, closes back into the circle and shrinks away. The clip keeps only the ring visible while closed. */
+@keyframes ach-pop {
+  0% { transform: scale(0); opacity: 0; clip-path: inset(0 calc(100% - var(--ring)) 0 0 round 999px); }
+  6% { transform: scale(1.12); opacity: 1; clip-path: inset(0 calc(100% - var(--ring)) 0 0 round 999px); }
+  10% { transform: scale(1); clip-path: inset(0 calc(100% - var(--ring)) 0 0 round 999px); }
+  20%, 82% { transform: scale(1); opacity: 1; clip-path: inset(0 0 0 0 round 999px); }
+  92% { transform: scale(1); opacity: 1; clip-path: inset(0 calc(100% - var(--ring)) 0 0 round 999px); }
+  100% { transform: scale(0); opacity: 0; clip-path: inset(0 calc(100% - var(--ring)) 0 0 round 999px); }
+}
+.ach-toast { transform-origin: calc(var(--ring) / 2) 50%; }
+.ach-toast.is-leaving { animation: ach-leave .45s ease forwards; }
+@keyframes ach-leave {
+  60% { transform: scale(1); clip-path: inset(0 calc(100% - var(--ring)) 0 0 round 999px); }
+  100% { transform: scale(0); opacity: 0; clip-path: inset(0 calc(100% - var(--ring)) 0 0 round 999px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ach-toast, .ach-toast.is-leaving { animation-name: ach-fade; }
+  @keyframes ach-fade { 0%, 100% { opacity: 0; } 10%, 90% { opacity: 1; } }
+}
+@media (max-width: 420px) {
+  .ach-toast { --ring: 3.9rem; }
+  .ach-toast-ring { width: 3.2rem; height: 3.2rem; }
+  .ach-toast-title { font-size: 1.1rem; } .ach-toast-name { font-size: .9rem; }
+}

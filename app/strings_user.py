@@ -186,6 +186,7 @@ STRINGS: dict[str, str] = {
     # Done
     "user.done.title": "Coffee recorded",
     "user.done.new_achievement": "New achievement unlocked!",
+    "user.done.toast_title": "Achievement unlocked",
     "user.done.new_achievements": "New achievements unlocked!",
     "user.done.see_achievements": "See all your achievements",
     "user.done.single": "Single recorded",

@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% from "user/_totals.html" import headline_block, totals_list %}
 {% block title %}{{ t("user.done.title") }} – {{ settings.app_title }}{% endblock %}
-{% block head_extra %}<link rel="stylesheet" href="/static/user.css">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/user.css"><link rel="stylesheet" href="/static/achievement-toast.css">{% endblock %}
+{% block scripts_extra %}{% if new_achievements %}<script src="/static/achievement-toast.js" defer></script>{% endif %}{% endblock %}
 {% block content %}
 <section class="card center">
   <div class="success-mark{{ ' is-reversed' if event.reversed else '' }}" aria-hidden="true">{{ "↶" if event.reversed else "✓" }}</div>
@@ -15,6 +16,14 @@
 </section>
 {% from "_profile.html" import badge_icon %}
 {% if new_achievements %}
+<div class="ach-toasts" aria-hidden="true">
+  {% for a in new_achievements %}
+  <div class="ach-toast" hidden>
+    <span class="ach-toast-ring">{{ badge_icon(a) }}</span>
+    <span class="ach-toast-text"><span class="ach-toast-title">{{ t("user.done.toast_title") }}</span><span class="ach-toast-name">{{ t("ach." ~ a.key ~ ".name") }}</span></span>
+  </div>
+  {% endfor %}
+</div>
 <section class="card achievement-new" role="status">
   <h2>{{ t("user.done.new_achievement") if new_achievements|length == 1 else t("user.done.new_achievements") }}</h2>
   <ul class="achievement-list">
