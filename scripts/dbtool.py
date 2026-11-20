@@ -23,11 +23,28 @@ def backup(src: str, dest: str) -> int:
     if not Path(src).is_file():
         print(f"error: database not found: {src}", file=sys.stderr)
         return 1
-    if Path(dest).exists():
+    dest_path = Path(dest)
+    if dest_path.exists():
         print(f"error: refusing to overwrite {dest}", file=sys.stderr)
         return 1
+    parent = dest_path.parent
+    if not parent.is_dir():
+        print(f"error: backup directory does not exist: {parent}", file=sys.stderr)
+        return 1
+    if not os.access(parent, os.W_OK | os.X_OK):
+        print(
+            f"error: backup directory not writable: {parent} "
+            "(Compose: mkdir -p backups && sudo chown 10001 backups)",
+            file=sys.stderr,
+        )
+        return 1
     source = sqlite3.connect(src, timeout=30)
-    target = sqlite3.connect(dest)
+    try:
+        target = sqlite3.connect(dest)
+    except sqlite3.OperationalError as exc:
+        source.close()
+        print(f"error: cannot create backup file {dest}: {exc}", file=sys.stderr)
+        return 1
     try:
         source.backup(target)
     finally:
