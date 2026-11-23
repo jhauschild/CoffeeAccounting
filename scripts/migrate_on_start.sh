@@ -8,16 +8,6 @@ set -euo pipefail
 # shellcheck source=scripts/_common.sh
 . "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
-# #region agent log
-_DEBUG_LOG="${SCRIPT_DIR}/../.cursor/debug-fb7e03.log"
-_dbg() {
-  local hyp="$1" msg="$2" data="${3:-{}}"
-  mkdir -p "$(dirname "$_DEBUG_LOG")" 2>/dev/null || true
-  printf '{"sessionId":"fb7e03","hypothesisId":"%s","location":"scripts/migrate_on_start.sh","message":"%s","data":%s,"timestamp":%s}\n' \
-    "$hyp" "$msg" "$data" "$(date +%s)000" >>"$_DEBUG_LOG" 2>/dev/null || true
-}
-# #endregion
-
 db="$(resolve_db_path)"
 
 db_at_head() {
@@ -48,33 +38,18 @@ PY
 
 if db_at_head; then
   echo "migrate_on_start: database already at alembic head"
-  # #region agent log
-  _dbg "H2" "already_at_head" "{\"db_exists\":true}"
-  # #endregion
   exit 0
 fi
 
 if [ -f "$db" ]; then
   echo "migrate_on_start: database behind head; backing up before migration"
-  # #region agent log
-  _dbg "H3" "backup_before_migrate" "{\"db_exists\":true}"
-  # #endregion
   if ! bash "$SCRIPT_DIR/backup.sh"; then
     echo "migrate_on_start: backup failed; refusing to migrate" >&2
-    # #region agent log
-    _dbg "H4" "backup_failed_abort" "{\"db_exists\":true}"
-    # #endregion
     exit 1
   fi
 else
   echo "migrate_on_start: no database yet; applying migrations"
-  # #region agent log
-  _dbg "H1" "fresh_db_no_backup" "{\"db_exists\":false}"
-  # #endregion
 fi
 
 "$PY" -m alembic upgrade head
 echo "migrate_on_start: migrations applied"
-# #region agent log
-_dbg "H1-H3" "migrate_done" "{\"db_exists\":$([ -f "$db" ] && echo true || echo false)}"
-# #endregion

@@ -25,7 +25,8 @@ case "$keep" in '' | *[!0-9]*) die "BACKUP_KEEP must be a positive integer" ;; e
 [ "$keep" -ge 1 ] || die "BACKUP_KEEP must be at least 1"
 [ -f "$db" ] || die "database not found: $db"
 
-mkdir -p "$dir"
+mkdir -p "$dir" || die "cannot create backup directory: $dir"
+[ -w "$dir" ] || die "backup directory not writable: $dir (Compose: mkdir -p backups && sudo chown 10001 backups)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 final="$dir/coffee-$stamp.db"
 partial="$dir/.coffee-$stamp.db.partial"
